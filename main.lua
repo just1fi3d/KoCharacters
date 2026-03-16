@@ -1,5 +1,5 @@
 -- main.lua
--- KOReader Character Extractor Plugin (Gemini AI, manual trigger)
+-- KoCharacters Plugin for KOReader (Gemini AI, manual trigger)
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager       = require("ui/uimanager")
@@ -84,67 +84,67 @@ end
 -- ---------------------------------------------------------------------------
 -- Plugin definition
 -- ---------------------------------------------------------------------------
-local CharExtractor = WidgetContainer:extend{
-    name        = "charextractor",
+local KoCharacters = WidgetContainer:extend{
+    name        = "kocharacters",
     is_doc_only = true,
 }
 
-function CharExtractor:onDispatcherRegisterActions()
-    Dispatcher:registerAction("charextract_page", {
+function KoCharacters:onDispatcherRegisterActions()
+    Dispatcher:registerAction("kochar_page", {
         category = "none",
         event    = "CharExtractPage",
-        title    = _("Character Extractor: Extract from page"),
+        title    = _("KoCharacters: Extract from page"),
         reader   = true,
     })
-    Dispatcher:registerAction("charextract_chapter", {
+    Dispatcher:registerAction("kochar_chapter", {
         category = "none",
         event    = "CharScanChapter",
-        title    = _("Character Extractor: Scan chapter"),
+        title    = _("KoCharacters: Scan chapter"),
         reader   = true,
     })
-    Dispatcher:registerAction("charextract_view", {
+    Dispatcher:registerAction("kochar_view", {
         category = "none",
         event    = "CharViewCharacters",
-        title    = _("Character Extractor: View characters"),
+        title    = _("KoCharacters: View characters"),
         reader   = true,
     })
-    Dispatcher:registerAction("charextract_reanalyze", {
+    Dispatcher:registerAction("kochar_reanalyze", {
         category = "none",
         event    = "CharReanalyze",
-        title    = _("Character Extractor: Re-analyze character..."),
+        title    = _("KoCharacters: Re-analyze character..."),
         reader   = true,
     })
-    Dispatcher:registerAction("charextract_usage", {
+    Dispatcher:registerAction("kochar_usage", {
         category = "none",
         event    = "CharViewUsage",
-        title    = _("Character Extractor: View API usage"),
+        title    = _("KoCharacters: View API usage"),
         reader   = true,
     })
-    Dispatcher:registerAction("charextract_relmap", {
+    Dispatcher:registerAction("kochar_relmap", {
         category = "none",
         event    = "CharRelationshipMap",
-        title    = _("Character Extractor: View relationship map"),
+        title    = _("KoCharacters: View relationship map"),
         reader   = true,
     })
 end
 
-function CharExtractor:onCharExtractPage()      self:onExtractCurrentPage() end
-function CharExtractor:onCharScanChapter()      self:onScanChapter() end
-function CharExtractor:onCharViewCharacters()   self:onViewCharacters() end
-function CharExtractor:onCharReanalyze()        self:onReanalyzeCharacterPicker() end
-function CharExtractor:onCharViewUsage()        self:onViewUsage() end
-function CharExtractor:onCharRelationshipMap()  self:onViewRelationshipMap() end
+function KoCharacters:onCharExtractPage()      self:onExtractCurrentPage() end
+function KoCharacters:onCharScanChapter()      self:onScanChapter() end
+function KoCharacters:onCharViewCharacters()   self:onViewCharacters() end
+function KoCharacters:onCharReanalyze()        self:onReanalyzeCharacterPicker() end
+function KoCharacters:onCharViewUsage()        self:onViewUsage() end
+function KoCharacters:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
-function CharExtractor:init()
+function KoCharacters:init()
     self.db               = CharacterDB
     self._auto_extracting = false
     self._pending_extract = nil
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
-    logger.info("CharExtractor: plugin initialised")
+    logger.info("KoCharacters: plugin initialised")
 end
 
-function CharExtractor:_getChapterStartForPage(pageno)
+function KoCharacters:_getChapterStartForPage(pageno)
     local doc = self.ui and self.ui.document
     if not doc then return pageno end
     local ok, toc = pcall(function() return doc:getToc() end)
@@ -157,8 +157,8 @@ function CharExtractor:_getChapterStartForPage(pageno)
     return chapter_start
 end
 
-function CharExtractor:_onPageChanged(pageno)
-    if not G_reader_settings:readSetting("charextractor_auto_extract") then return end
+function KoCharacters:_onPageChanged(pageno)
+    if not G_reader_settings:readSetting("kocharacters_auto_extract") then return end
 
     -- Cancel any pending extraction scheduled for a previous page
     if self._pending_extract then
@@ -174,7 +174,7 @@ function CharExtractor:_onPageChanged(pageno)
 
     -- Debounce: wait N seconds before extracting so rapid page flips don't
     -- trigger a cascade of blocking API calls
-    local delay = G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10
+    local delay = G_reader_settings:readSetting("kocharacters_auto_extract_delay") or 10
     self._pending_extract = function()
         self._pending_extract = nil
         if self._auto_extracting then return end
@@ -185,17 +185,17 @@ function CharExtractor:_onPageChanged(pageno)
     UIManager:scheduleIn(delay, self._pending_extract)
 end
 
-function CharExtractor:onPageUpdate(pageno)
+function KoCharacters:onPageUpdate(pageno)
     self:_onPageChanged(pageno)
 end
 
-function CharExtractor:onPosUpdate()
+function KoCharacters:onPosUpdate()
     local pageno
     pcall(function() pageno = self.ui.view.state.page end)
     if pageno then self:_onPageChanged(pageno) end
 end
 
-function CharExtractor:autoExtract(page_num)
+function KoCharacters:autoExtract(page_num)
     if self._auto_extracting then return end
     local api_key = self:getApiKey()
     if api_key == "" then return end
@@ -204,7 +204,7 @@ function CharExtractor:autoExtract(page_num)
 
     local page_text, err = self:getCurrentPageText(page_num)
     if not page_text then
-        logger.warn("CharExtractor: autoExtract getText failed: " .. tostring(err))
+        logger.warn("KoCharacters: autoExtract getText failed: " .. tostring(err))
         -- Mark as scanned anyway so we don't retry a page that can't be read
         if page_num then self.db:markPageScanned(book_id, page_num) end
         return
@@ -250,12 +250,12 @@ function CharExtractor:autoExtract(page_num)
     end, cur_page, true)
 end
 
-function CharExtractor:addToMainMenu(menu_items)
-    menu_items.char_extractor = {
+function KoCharacters:addToMainMenu(menu_items)
+    menu_items.ko_characters = {
         text_func = function()
             local book_id = self:getBookID()
             local n = book_id and #self.db:load(book_id) or 0
-            local base = n == 0 and _("Character Extractor") or (_("Character Extractor") .. " (" .. n .. ")")
+            local base = n == 0 and _("KoCharacters") or (_("KoCharacters") .. " (" .. n .. ")")
             if book_id and self.db:hasPendingCleanup(book_id) then
                 base = base .. " — cleanup needed"
             end
@@ -301,14 +301,14 @@ end
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
-function CharExtractor:showMsg(text, timeout)
+function KoCharacters:showMsg(text, timeout)
     UIManager:show(InfoMessage:new{
         text    = text,
         timeout = timeout or 4,
     })
 end
 
-function CharExtractor:checkAndWarnDuplicates(book_id, on_continue)
+function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
     local characters = self.db:load(book_id)
     if #characters < 2 then on_continue(); return end
     local pairs = findDuplicatePairs(characters)
@@ -326,13 +326,13 @@ function CharExtractor:checkAndWarnDuplicates(book_id, on_continue)
     })
 end
 
-function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
+function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
     local existing  = self.db:load(book_id)
     local conflicts = findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
 
     -- Auto-accept mode: enrich all conflicts silently, show a toast summary
-    if G_reader_settings:readSetting("charextractor_auto_enrich") then
+    if G_reader_settings:readSetting("kocharacters_auto_enrich") then
         local enriched_names = {}
         local conflict_set   = {}
         for _, conflict in ipairs(conflicts) do
@@ -423,7 +423,7 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
             end
             if changed then self_ref.db:save(book_id, all_chars) end
         else
-            logger.warn("CharExtractor: batch cleanup failed: " .. tostring(call_err or err))
+            logger.warn("KoCharacters: batch cleanup failed: " .. tostring(call_err or err))
         end
 
         on_done(resolved)
@@ -490,41 +490,41 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
     processConflicts(conflicts)
 end
 
-function CharExtractor:getApiKey()
-    return G_reader_settings:readSetting("charextractor_api_key") or ""
+function KoCharacters:getApiKey()
+    return G_reader_settings:readSetting("kocharacters_api_key") or ""
 end
 
-function CharExtractor:getCurrentPage()
+function KoCharacters:getCurrentPage()
     local page
     pcall(function() page = self.ui.view.state.page end)
     return page
 end
 
-function CharExtractor:getExtractionPrompt()
-    return G_reader_settings:readSetting("charextractor_extraction_prompt")
+function KoCharacters:getExtractionPrompt()
+    return G_reader_settings:readSetting("kocharacters_extraction_prompt")
         or GeminiClient.DEFAULT_EXTRACTION_PROMPT
 end
 
-function CharExtractor:getCleanupPrompt()
-    return G_reader_settings:readSetting("charextractor_cleanup_prompt")
+function KoCharacters:getCleanupPrompt()
+    return G_reader_settings:readSetting("kocharacters_cleanup_prompt")
         or GeminiClient.DEFAULT_CLEANUP_PROMPT
 end
 
-function CharExtractor:getReanalyzePrompt()
-    return G_reader_settings:readSetting("charextractor_reanalyze_prompt")
+function KoCharacters:getReanalyzePrompt()
+    return G_reader_settings:readSetting("kocharacters_reanalyze_prompt")
         or GeminiClient.DEFAULT_REANALYZE_PROMPT
 end
 
-function CharExtractor:getRelationshipMapPrompt()
-    return G_reader_settings:readSetting("charextractor_relationship_map_prompt")
+function KoCharacters:getRelationshipMapPrompt()
+    return G_reader_settings:readSetting("kocharacters_relationship_map_prompt")
         or GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
 end
 
-function CharExtractor:recordUsage(usage)
+function KoCharacters:recordUsage(usage)
     if not usage then return end
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
-    local path        = DataStorage:getDataDir() .. "/charextractor/usage_stats.json"
+    local path        = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
 
     local stats = {}
     local f = io.open(path, "r")
@@ -545,10 +545,10 @@ function CharExtractor:recordUsage(usage)
     if fw then fw:write(json.encode(stats)); fw:close() end
 end
 
-function CharExtractor:onViewRelationshipMap()
+function KoCharacters:onViewRelationshipMap()
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -594,10 +594,10 @@ function CharExtractor:onViewRelationshipMap()
     })
 end
 
-function CharExtractor:onViewUsage()
+function KoCharacters:onViewUsage()
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
-    local path        = DataStorage:getDataDir() .. "/charextractor/usage_stats.json"
+    local path        = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
 
     local stats = {}
     local f = io.open(path, "r")
@@ -640,7 +640,7 @@ function CharExtractor:onViewUsage()
 end
 
 -- Derive a stable book ID purely from the file path — no document API calls
-function CharExtractor:getBookID()
+function KoCharacters:getBookID()
     if self.ui and self.ui.document and self.ui.document.file then
         local path = self.ui.document.file
         -- Simple hash: sum of byte values + length, good enough for a filename key
@@ -655,7 +655,7 @@ function CharExtractor:getBookID()
     return nil
 end
 
-function CharExtractor:getBookTitle()
+function KoCharacters:getBookTitle()
     if self.ui and self.ui.doc_settings then
         local ok, props = pcall(function()
             return self.ui.doc_settings:readSetting("doc_props")
@@ -670,7 +670,7 @@ function CharExtractor:getBookTitle()
     return "Unknown Book"
 end
 
-function CharExtractor:getCurrentPageText(override_page)
+function KoCharacters:getCurrentPageText(override_page)
     if not self.ui or not self.ui.document then
         return nil, "No document open"
     end
@@ -687,7 +687,7 @@ function CharExtractor:getCurrentPageText(override_page)
     -- CreDocument (EPUB): getPageXPointer works, getPosFromXPointer works
     -- Use these to get integer position range, then getTextBoxesFromPositions
     if type(doc.getPageXPointer) == "function" then
-        logger.info("CharExtractor: using getPageXPointer+getPosFromXPointer strategy")
+        logger.info("KoCharacters: using getPageXPointer+getPosFromXPointer strategy")
 
         local ok1, xp_cur  = pcall(function() return doc:getPageXPointer(page) end)
         local ok2, xp_next = pcall(function() return doc:getPageXPointer(page + 1) end)
@@ -706,7 +706,7 @@ function CharExtractor:getCurrentPageText(override_page)
         end
         if not pos_end then pos_end = pos_start + 5000 end
 
-        logger.info("CharExtractor: pos=" .. tostring(pos_start) .. "-" .. tostring(pos_end))
+        logger.info("KoCharacters: pos=" .. tostring(pos_start) .. "-" .. tostring(pos_end))
 
         -- Try getTextBoxesFromPositions (some builds have this)
         local ok5, boxes = pcall(function()
@@ -728,7 +728,7 @@ function CharExtractor:getCurrentPageText(override_page)
 
         -- Use getDocumentFileContent — confirmed working
         local frag_idx = tostring(xp_cur):match("DocFragment%[(%d+)%]")
-        logger.info("CharExtractor: frag_idx=" .. tostring(frag_idx))
+        logger.info("KoCharacters: frag_idx=" .. tostring(frag_idx))
         -- Get fragment start AND end position from TOC for accurate slicing
         local frag_start_pos = 0
         local frag_end_pos = 0
@@ -758,7 +758,7 @@ function CharExtractor:getCurrentPageText(override_page)
                 if ok_xp and p then frag_end_pos = p end
             end
         end
-        logger.info("CharExtractor: frag_start=" .. frag_start_pos .. " frag_end=" .. frag_end_pos)
+        logger.info("KoCharacters: frag_start=" .. frag_start_pos .. " frag_end=" .. frag_end_pos)
 
         -- Read epub as zip directly — most reliable approach
         local function stripAndSlice(raw)
@@ -784,16 +784,16 @@ function CharExtractor:getCurrentPageText(override_page)
             local centre = math.floor(ratio * #text)
             local s = math.max(1, centre - 500)
             local e = math.min(#text, s + MAX)
-            logger.info("CharExtractor: ratio=" .. string.format("%.2f", ratio) .. " slice=" .. s .. "-" .. e .. "/" .. #text)
+            logger.info("KoCharacters: ratio=" .. string.format("%.2f", ratio) .. " slice=" .. s .. "-" .. e .. "/" .. #text)
             local slice = text:sub(s, e)
             if #slice < 200 then return text:sub(1, math.min(#text, MAX)) end
             return slice
         end
 
         local epub_path = doc.file
-        logger.info("CharExtractor: epub_path=" .. tostring(epub_path))
+        logger.info("KoCharacters: epub_path=" .. tostring(epub_path))
         if epub_path then
-            logger.info("CharExtractor: starting popen unzip")
+            logger.info("KoCharacters: starting popen unzip")
             local ok_p, result = pcall(function()
                 local h = io.popen("unzip -l '" .. epub_path .. "' 2>/dev/null", "r")
                 if not h then return nil, "popen failed" end
@@ -801,13 +801,13 @@ function CharExtractor:getCurrentPageText(override_page)
                 h:close()
                 return listing
             end)
-            logger.info("CharExtractor: popen ok=" .. tostring(ok_p) .. " type=" .. type(result) .. " len=" .. (type(result)=="string" and #result or 0))
+            logger.info("KoCharacters: popen ok=" .. tostring(ok_p) .. " type=" .. type(result) .. " len=" .. (type(result)=="string" and #result or 0))
 
             if ok_p and type(result) == "string" and #result > 10 then
                 local n = tonumber(frag_idx) or 1
                 -- Find OPF path in listing
                 local opf_path = result:match("([^%s]+%.opf)")
-                logger.info("CharExtractor: opf_path=" .. tostring(opf_path))
+                logger.info("KoCharacters: opf_path=" .. tostring(opf_path))
 
                 if opf_path then
                     local ok2, opf = pcall(function()
@@ -815,7 +815,7 @@ function CharExtractor:getCurrentPageText(override_page)
                         if not h then return nil end
                         local s = h:read("*a"); h:close(); return s
                     end)
-                    logger.info("CharExtractor: opf ok=" .. tostring(ok2) .. " len=" .. (type(opf)=="string" and #opf or 0))
+                    logger.info("KoCharacters: opf ok=" .. tostring(ok2) .. " len=" .. (type(opf)=="string" and #opf or 0))
 
                     if ok2 and type(opf) == "string" and #opf > 50 then
                         -- Find nth spine itemref
@@ -824,13 +824,13 @@ function CharExtractor:getCurrentPageText(override_page)
                             count = count + 1
                             if count == n then item_id = idref; break end
                         end
-                        logger.info("CharExtractor: spine#" .. n .. " id=" .. tostring(item_id))
+                        logger.info("KoCharacters: spine#" .. n .. " id=" .. tostring(item_id))
 
                         if item_id then
                             local pat1 = [[item[^>]+href="([^"]+)"[^>]+id="]] .. item_id .. [["]]
                             local pat2 = [[item[^>]+id="]] .. item_id .. [["[^>]+href="([^"]+)"]]
                             local href = opf:match(pat2) or opf:match(pat1)
-                            logger.info("CharExtractor: chapter href=" .. tostring(href))
+                            logger.info("KoCharacters: chapter href=" .. tostring(href))
 
                             if href then
                                 local base = opf_path:match("^(.*/)") or ""
@@ -840,7 +840,7 @@ function CharExtractor:getCurrentPageText(override_page)
                                     if not h then return nil end
                                     local s = h:read("*a"); h:close(); return s
                                 end)
-                                logger.info("CharExtractor: chapter ok=" .. tostring(ok3) .. " len=" .. (type(chapter)=="string" and #chapter or 0))
+                                logger.info("KoCharacters: chapter ok=" .. tostring(ok3) .. " len=" .. (type(chapter)=="string" and #chapter or 0))
 
                                 if ok3 and type(chapter) == "string" and #chapter > 100 then
                                     return stripAndSlice(chapter)
@@ -874,7 +874,7 @@ function CharExtractor:getCurrentPageText(override_page)
     return table.concat(words, " ")
 end
 
-function CharExtractor:getCurrentChapterPageRange()
+function KoCharacters:getCurrentChapterPageRange()
     if not self.ui or not self.ui.document then
         return nil, nil, "No document open"
     end
@@ -915,7 +915,7 @@ function CharExtractor:getCurrentChapterPageRange()
     return chapter_start, chapter_end, nil
 end
 
-function CharExtractor:formatCharacter(c)
+function KoCharacters:formatCharacter(c)
     local lines = {}
     table.insert(lines, "========================")
     table.insert(lines, "Name: " .. (c.name or "Unknown"))
@@ -949,7 +949,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Edit character
 -- ---------------------------------------------------------------------------
-function CharExtractor:onEditCharacter(book_id, char)
+function KoCharacters:onEditCharacter(book_id, char)
     local self_ref   = self
     -- Track the name used to look up the record (changes if the user renames)
     local lookup_name = char.name
@@ -1091,12 +1091,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Actions
 -- ---------------------------------------------------------------------------
-function CharExtractor:onExtractCurrentPage()
-    logger.info("CharExtractor: onExtractCurrentPage called")
+function KoCharacters:onExtractCurrentPage()
+    logger.info("KoCharacters: onExtractCurrentPage called")
 
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -1117,7 +1117,7 @@ function CharExtractor:onExtractCurrentPage()
             return
         end
 
-        logger.info("CharExtractor: page text length=" .. #page_text .. " preview=" .. page_text:sub(1,150))
+        logger.info("KoCharacters: page text length=" .. #page_text .. " preview=" .. page_text:sub(1,150))
 
         local working_msg = InfoMessage:new{
             text = "Contacting Gemini AI...\nThis may take a few seconds."
@@ -1141,7 +1141,7 @@ function CharExtractor:onExtractCurrentPage()
             if found then table.insert(chars_in_text, c)
             else table.insert(skip_names, c.name) end
         end
-        logger.info("CharExtractor: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
+        logger.info("KoCharacters: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
 
         local client = GeminiClient:new(api_key)
         local characters, err, usage
@@ -1153,12 +1153,12 @@ function CharExtractor:onExtractCurrentPage()
         if ok and not err then self:recordUsage(usage) end
 
         if not ok then
-            logger.warn("CharExtractor: pcall error: " .. tostring(call_err))
+            logger.warn("KoCharacters: pcall error: " .. tostring(call_err))
             self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
             return
         end
         if err then
-            logger.warn("CharExtractor: API error: " .. tostring(err))
+            logger.warn("KoCharacters: API error: " .. tostring(err))
             self:showMsg("Gemini error:\n" .. tostring(err), 8)
             return
         end
@@ -1187,12 +1187,12 @@ function CharExtractor:onExtractCurrentPage()
     end)
 end
 
-function CharExtractor:onScanChapter()
-    logger.info("CharExtractor: onScanChapter called")
+function KoCharacters:onScanChapter()
+    logger.info("KoCharacters: onScanChapter called")
 
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -1221,7 +1221,7 @@ function CharExtractor:onScanChapter()
     })
 end
 
-function CharExtractor:doChapterScan(book_id, start_page, end_page)
+function KoCharacters:doChapterScan(book_id, start_page, end_page)
     local PAGES_PER_BATCH = 4
 
     local client         = GeminiClient:new(self:getApiKey())
@@ -1280,7 +1280,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
                 end
                 if changed then self_ref.db:save(book_id, all_chars) end
             else
-                logger.warn("CharExtractor: scan cleanup failed: " .. tostring(ccall_err or cerr))
+                logger.warn("KoCharacters: scan cleanup failed: " .. tostring(ccall_err or cerr))
             end
         end
 
@@ -1326,7 +1326,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
         self_ref.db:markPagesScanned(book_id, batch_start, batch_end)
 
         if #texts == 0 then
-            logger.info("CharExtractor: batch " .. batch_num .. " had no readable pages, skipping")
+            logger.info("KoCharacters: batch " .. batch_num .. " had no readable pages, skipping")
             UIManager:scheduleIn(0.5, function() processBatch(batch_end + 1) end)
             return
         end
@@ -1356,9 +1356,9 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
         if ok and not err then self_ref:recordUsage(usage) end
 
         if not ok then
-            logger.warn("CharExtractor: batch " .. batch_num .. " pcall: " .. tostring(call_err))
+            logger.warn("KoCharacters: batch " .. batch_num .. " pcall: " .. tostring(call_err))
         elseif err then
-            logger.warn("CharExtractor: batch " .. batch_num .. " api: " .. tostring(err))
+            logger.warn("KoCharacters: batch " .. batch_num .. " api: " .. tostring(err))
         elseif characters and #characters > 0 then
             local ex_chars     = self_ref.db:load(book_id)
             local ic           = findIncomingConflicts(ex_chars, characters)
@@ -1367,7 +1367,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
                 conflict_set[(c.new_char.name or ""):lower()] = true
                 self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, batch_end)
                 enriched_names[c.existing_char.name] = true
-                logger.info("CharExtractor: batch auto-enriched '" .. c.existing_char.name .. "'")
+                logger.info("KoCharacters: batch auto-enriched '" .. c.existing_char.name .. "'")
             end
             local remaining = {}
             for _, c in ipairs(characters) do
@@ -1383,7 +1383,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
     processBatch(start_page)
 end
 
-function CharExtractor:onViewCharacters()
+function KoCharacters:onViewCharacters()
     local book_id = self:getBookID()
     if not book_id then
         self:showMsg("Cannot identify book — is a document open?")
@@ -1396,7 +1396,7 @@ function CharExtractor:onViewCharacters()
     self:showCharacterBrowser(book_id, "default", "")
 end
 
-function CharExtractor:showCharacterBrowser(book_id, sort_mode, query)
+function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
     local ok, Menu = pcall(require, "ui/widget/menu")
     if not ok or not Menu then return end
 
@@ -1422,7 +1422,7 @@ function CharExtractor:showCharacterBrowser(book_id, sort_mode, query)
     end
 
     -- Spoiler protection: hide characters whose first_seen_page is ahead of current page
-    if G_reader_settings:readSetting("charextractor_spoiler_protection") then
+    if G_reader_settings:readSetting("kocharacters_spoiler_protection") then
         local cur_page = self:getCurrentPage() or 0
         local visible  = {}
         for _, c in ipairs(filtered) do
@@ -1605,7 +1605,7 @@ function CharExtractor:showCharacterBrowser(book_id, sort_mode, query)
     })
 end
 
-function CharExtractor:onExportCharacters()
+function KoCharacters:onExportCharacters()
     local book_id = self:getBookID()
     if not book_id then
         self:showMsg("Cannot identify book.")
@@ -1618,7 +1618,7 @@ function CharExtractor:onExportCharacters()
     end
     local title = self:getBookTitle()
     local DataStorage = require("datastorage")
-    local export_path = DataStorage:getDataDir() .. "/charextractor/" .. book_id .. "_characters.html"
+    local export_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "_characters.html"
 
     local function esc(s)
         s = tostring(s or "")
@@ -1703,7 +1703,7 @@ function CharExtractor:onExportCharacters()
     self:showMsg("Exported to:\n" .. export_path, 5)
 end
 
-function CharExtractor:onCleanupAllCharacters()
+function KoCharacters:onCleanupAllCharacters()
     local book_id = self:getBookID()
     if not book_id then return end
     local characters = self.db:load(book_id)
@@ -1714,7 +1714,7 @@ function CharExtractor:onCleanupAllCharacters()
 
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -1772,7 +1772,7 @@ function CharExtractor:onCleanupAllCharacters()
     self:showMsg("Cleanup complete. " .. #cleaned .. " character(s) cleaned.", 4)
 end
 
-function CharExtractor:onClearDatabase()
+function KoCharacters:onClearDatabase()
     local book_id = self:getBookID()
     if not book_id then return end
     UIManager:show(ConfirmBox:new{
@@ -1787,14 +1787,14 @@ function CharExtractor:onClearDatabase()
     })
 end
 
-function CharExtractor:onOpenSettings()
+function KoCharacters:onOpenSettings()
     local ok, Menu = pcall(require, "ui/widget/menu")
     if not ok then
         self:onSetApiKey()
         return
     end
     UIManager:show(Menu:new{
-        title      = "Character Extractor Settings",
+        title      = "KoCharacters Settings",
         item_table = {
             {
                 text     = "Gemini API key",
@@ -1802,21 +1802,21 @@ function CharExtractor:onOpenSettings()
             },
             {
                 text = "Auto-extract on page turn: "
-                    .. (G_reader_settings:readSetting("charextractor_auto_extract") and "ON" or "OFF"),
+                    .. (G_reader_settings:readSetting("kocharacters_auto_extract") and "ON" or "OFF"),
                 callback = function()
-                    local on = G_reader_settings:readSetting("charextractor_auto_extract")
-                    G_reader_settings:saveSetting("charextractor_auto_extract", not on)
+                    local on = G_reader_settings:readSetting("kocharacters_auto_extract")
+                    G_reader_settings:saveSetting("kocharacters_auto_extract", not on)
                     self:showMsg("Auto-extract: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
             {
                 text = "Auto-extract delay: "
-                    .. (G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10) .. "s",
+                    .. (G_reader_settings:readSetting("kocharacters_auto_extract_delay") or 10) .. "s",
                 callback = function()
                     local dialog
                     dialog = InputDialog:new{
                         title      = "Auto-extract delay (seconds)",
-                        input      = tostring(G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10),
+                        input      = tostring(G_reader_settings:readSetting("kocharacters_auto_extract_delay") or 10),
                         input_type = "number",
                         buttons    = {{
                             { text = "Cancel", callback = function() UIManager:close(dialog) end },
@@ -1827,7 +1827,7 @@ function CharExtractor:onOpenSettings()
                                     local val = tonumber(dialog:getInputText())
                                     UIManager:close(dialog)
                                     if val and val > 0 then
-                                        G_reader_settings:saveSetting("charextractor_auto_extract_delay", val)
+                                        G_reader_settings:saveSetting("kocharacters_auto_extract_delay", val)
                                         self:showMsg("Auto-extract delay set to " .. val .. "s", 2)
                                     end
                                 end,
@@ -1840,19 +1840,19 @@ function CharExtractor:onOpenSettings()
             },
             {
                 text = "Auto-accept enrichments: "
-                    .. (G_reader_settings:readSetting("charextractor_auto_enrich") and "ON" or "OFF"),
+                    .. (G_reader_settings:readSetting("kocharacters_auto_enrich") and "ON" or "OFF"),
                 callback = function()
-                    local on = G_reader_settings:readSetting("charextractor_auto_enrich")
-                    G_reader_settings:saveSetting("charextractor_auto_enrich", not on)
+                    local on = G_reader_settings:readSetting("kocharacters_auto_enrich")
+                    G_reader_settings:saveSetting("kocharacters_auto_enrich", not on)
                     self:showMsg("Auto-accept enrichments: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
             {
                 text = "Spoiler protection: "
-                    .. (G_reader_settings:readSetting("charextractor_spoiler_protection") and "ON" or "OFF"),
+                    .. (G_reader_settings:readSetting("kocharacters_spoiler_protection") and "ON" or "OFF"),
                 callback = function()
-                    local on = G_reader_settings:readSetting("charextractor_spoiler_protection")
-                    G_reader_settings:saveSetting("charextractor_spoiler_protection", not on)
+                    local on = G_reader_settings:readSetting("kocharacters_spoiler_protection")
+                    G_reader_settings:saveSetting("kocharacters_spoiler_protection", not on)
                     self:showMsg("Spoiler protection: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
@@ -1864,7 +1864,7 @@ function CharExtractor:onOpenSettings()
                 text     = "Edit extraction prompt",
                 callback = function() self:onEditPrompt(
                     "Extraction Prompt",
-                    "charextractor_extraction_prompt",
+                    "kocharacters_extraction_prompt",
                     GeminiClient.DEFAULT_EXTRACTION_PROMPT
                 ) end,
             },
@@ -1872,7 +1872,7 @@ function CharExtractor:onOpenSettings()
                 text     = "Edit cleanup prompt",
                 callback = function() self:onEditPrompt(
                     "Cleanup Prompt",
-                    "charextractor_cleanup_prompt",
+                    "kocharacters_cleanup_prompt",
                     GeminiClient.DEFAULT_CLEANUP_PROMPT
                 ) end,
             },
@@ -1880,7 +1880,7 @@ function CharExtractor:onOpenSettings()
                 text     = "Edit re-analyze prompt",
                 callback = function() self:onEditPrompt(
                     "Re-analyze Prompt",
-                    "charextractor_reanalyze_prompt",
+                    "kocharacters_reanalyze_prompt",
                     GeminiClient.DEFAULT_REANALYZE_PROMPT
                 ) end,
             },
@@ -1888,7 +1888,7 @@ function CharExtractor:onOpenSettings()
                 text     = "Edit relationship map prompt",
                 callback = function() self:onEditPrompt(
                     "Relationship Map Prompt",
-                    "charextractor_relationship_map_prompt",
+                    "kocharacters_relationship_map_prompt",
                     GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
                 ) end,
             },
@@ -1903,10 +1903,10 @@ function CharExtractor:onOpenSettings()
                         text        = "Reset all prompts to their built-in defaults?",
                         ok_text     = "Reset",
                         ok_callback = function()
-                            G_reader_settings:delSetting("charextractor_extraction_prompt")
-                            G_reader_settings:delSetting("charextractor_cleanup_prompt")
-                            G_reader_settings:delSetting("charextractor_reanalyze_prompt")
-                            G_reader_settings:delSetting("charextractor_relationship_map_prompt")
+                            G_reader_settings:delSetting("kocharacters_extraction_prompt")
+                            G_reader_settings:delSetting("kocharacters_cleanup_prompt")
+                            G_reader_settings:delSetting("kocharacters_reanalyze_prompt")
+                            G_reader_settings:delSetting("kocharacters_relationship_map_prompt")
                             self:showMsg("Prompts reset to defaults.", 2)
                         end,
                     })
@@ -1918,7 +1918,7 @@ function CharExtractor:onOpenSettings()
     })
 end
 
-function CharExtractor:onSetApiKey()
+function KoCharacters:onSetApiKey()
     local current_key = self:getApiKey()
     local dialog
     dialog = InputDialog:new{
@@ -1938,7 +1938,7 @@ function CharExtractor:onSetApiKey()
                     callback         = function()
                         local key = dialog:getInputText() or ""
                         key = key:match("^%s*(.-)%s*$") or ""
-                        G_reader_settings:saveSetting("charextractor_api_key", key)
+                        G_reader_settings:saveSetting("kocharacters_api_key", key)
                         UIManager:close(dialog)
                         self:showMsg("API key saved.", 2)
                     end,
@@ -1950,7 +1950,7 @@ function CharExtractor:onSetApiKey()
     dialog:onShowKeyboard()
 end
 
-function CharExtractor:onEditPrompt(title, setting_key, default_prompt)
+function KoCharacters:onEditPrompt(title, setting_key, default_prompt)
     local current = G_reader_settings:readSetting(setting_key) or default_prompt
     local is_custom = G_reader_settings:readSetting(setting_key) ~= nil
     local label = is_custom and "Custom prompt active" or "Using default prompt"
@@ -1991,7 +1991,7 @@ function CharExtractor:onEditPrompt(title, setting_key, default_prompt)
     dialog:onShowKeyboard()
 end
 
-function CharExtractor:onDebugPageText()
+function KoCharacters:onDebugPageText()
     if not self.ui or not self.ui.document then
         self:showMsg("No document open.")
         return
@@ -2167,10 +2167,10 @@ function CharExtractor:onDebugPageText()
     })
 end
 
-function CharExtractor:onReanalyzeCharacter(book_id, char)
+function KoCharacters:onReanalyzeCharacter(book_id, char)
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -2211,7 +2211,7 @@ function CharExtractor:onReanalyzeCharacter(book_id, char)
     self:showMsg('"' .. char.name .. '" updated.', 3)
 end
 
-function CharExtractor:onReanalyzeCharacterPicker()
+function KoCharacters:onReanalyzeCharacterPicker()
     local book_id = self:getBookID()
     if not book_id then
         self:showMsg("Cannot identify book — is a document open?")
@@ -2247,10 +2247,10 @@ function CharExtractor:onReanalyzeCharacterPicker()
     end
 end
 
-function CharExtractor:onCleanCharacter(book_id, char_name)
+function KoCharacters:onCleanCharacter(book_id, char_name)
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -2289,10 +2289,10 @@ function CharExtractor:onCleanCharacter(book_id, char_name)
     self:showMsg('"' .. char_name .. '" cleaned up.', 3)
 end
 
-function CharExtractor:onShowLimits()
+function KoCharacters:onShowLimits()
     local api_key = self:getApiKey()
     if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
@@ -2342,4 +2342,4 @@ function CharExtractor:onShowLimits()
     })
 end
 
-return CharExtractor
+return KoCharacters
