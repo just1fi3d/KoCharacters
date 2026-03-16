@@ -137,8 +137,7 @@ function CharExtractor:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
 function CharExtractor:init()
     self.db = CharacterDB
-    self._last_chapter_start = nil
-    self._auto_extracting    = false
+    self._auto_extracting = false
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     logger.info("CharExtractor: plugin initialised")
@@ -160,15 +159,10 @@ end
 function CharExtractor:_onPageChanged(pageno)
     if not G_reader_settings:readSetting("charextractor_auto_extract") then return end
     if self._auto_extracting then return end
-    local chapter_start = self:_getChapterStartForPage(pageno)
-    if self._last_chapter_start == nil then
-        self._last_chapter_start = chapter_start
-        return
-    end
-    if chapter_start ~= self._last_chapter_start then
-        self._last_chapter_start = chapter_start
-        self:autoExtract()
-    end
+    local book_id = self:getBookID()
+    if not book_id then return end
+    if self.db:isPageScanned(book_id, pageno) then return end
+    self:autoExtract(pageno)
 end
 
 function CharExtractor:onPageUpdate(pageno)
@@ -181,20 +175,24 @@ function CharExtractor:onPosUpdate()
     if pageno then self:_onPageChanged(pageno) end
 end
 
-function CharExtractor:autoExtract()
+function CharExtractor:autoExtract(page_num)
     if self._auto_extracting then return end
     local api_key = self:getApiKey()
     if api_key == "" then return end
     local book_id = self:getBookID()
     if not book_id then return end
 
-    local page_text, err = self:getCurrentPageText()
+    local page_text, err = self:getCurrentPageText(page_num)
     if not page_text then
         logger.warn("CharExtractor: autoExtract getText failed: " .. tostring(err))
+        -- Mark as scanned anyway so we don't retry a page that can't be read
+        if page_num then self.db:markPageScanned(book_id, page_num) end
         return
     end
 
     self._auto_extracting = true
+    -- Mark page as scanned now so back/forward navigation won't re-trigger
+    if page_num then self.db:markPageScanned(book_id, page_num) end
 
     local existing   = self.db:load(book_id)
     local page_lower = page_text:lower()
@@ -224,7 +222,7 @@ function CharExtractor:autoExtract()
         return
     end
 
-    local cur_page = self:getCurrentPage()
+    local cur_page = page_num or self:getCurrentPage()
     self:handleIncomingConflicts(book_id, characters, function(resolved)
         if #resolved > 0 then self.db:merge(book_id, resolved, cur_page) end
         self._auto_extracting = false
@@ -1170,8 +1168,11 @@ function CharExtractor:onScanChapter()
 end
 
 function CharExtractor:doChapterScan(book_id, start_page, end_page)
+    local PAGES_PER_BATCH = 4
+
     local client         = GeminiClient:new(self:getApiKey())
     local page_count     = end_page - start_page + 1
+    local total_batches  = math.ceil(page_count / PAGES_PER_BATCH)
     local total_found    = 0
     local enriched_names = {}
     local progress_msg
@@ -1180,7 +1181,6 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
     local function doCleanup()
         if progress_msg then UIManager:close(progress_msg); progress_msg = nil end
 
-        -- Clean up all enriched characters in one Gemini call
         local enriched_list = {}
         for _, c in ipairs(self_ref.db:load(book_id)) do
             if enriched_names[c.name] then table.insert(enriched_list, c) end
@@ -1232,45 +1232,60 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
 
         self_ref:showMsg(
             "Chapter scan complete.\n"
-            .. "Pages scanned: " .. page_count .. "\n"
+            .. "Batches: " .. total_batches .. " (".. page_count .. " pages, " .. PAGES_PER_BATCH .. " per batch)\n"
             .. "Characters found/updated: " .. total_found,
             6
         )
     end
 
-    -- processPage schedules itself via UIManager:scheduleIn so the UI event
-    -- loop is never blocked — prevents the Kindle from appearing hung during
-    -- long chapter scans.
-    local function processPage(p)
-        if p > end_page then
+    -- processBatch collects text from up to PAGES_PER_BATCH pages, sends one
+    -- API call, then schedules the next batch via UIManager:scheduleIn to keep
+    -- the UI responsive.
+    local function processBatch(batch_start)
+        if batch_start > end_page then
             doCleanup()
             return
         end
 
+        local batch_end  = math.min(batch_start + PAGES_PER_BATCH - 1, end_page)
+        local batch_num  = math.floor((batch_start - start_page) / PAGES_PER_BATCH) + 1
+
         if progress_msg then UIManager:close(progress_msg) end
         progress_msg = InfoMessage:new{
-            text = "Scanning chapter...\nPage " .. (p - start_page + 1) .. " / " .. page_count,
+            text = "Scanning chapter...\nBatch " .. batch_num .. "/" .. total_batches
+                   .. " (pages " .. batch_start .. "–" .. batch_end .. ")",
         }
         UIManager:show(progress_msg)
         UIManager:forceRePaint()
 
-        local page_text, text_err = self_ref:getCurrentPageText(p)
-        if not page_text or #page_text < 20 then
-            logger.info("CharExtractor: scan skip p=" .. p .. " " .. tostring(text_err or "too short"))
-            -- Yield briefly before moving to next page
-            UIManager:scheduleIn(0.5, function() processPage(p + 1) end)
+        -- Collect and concatenate text from all pages in this batch
+        local texts = {}
+        for p = batch_start, batch_end do
+            local page_text = self_ref:getCurrentPageText(p)
+            if page_text and #page_text >= 20 then
+                table.insert(texts, page_text)
+            end
+        end
+
+        -- Mark all pages in batch as scanned regardless of whether we got text
+        self_ref.db:markPagesScanned(book_id, batch_start, batch_end)
+
+        if #texts == 0 then
+            logger.info("CharExtractor: batch " .. batch_num .. " had no readable pages, skipping")
+            UIManager:scheduleIn(0.5, function() processBatch(batch_end + 1) end)
             return
         end
 
-        local all_chars     = self_ref.db:load(book_id)
-        local chars_in_text = {}
-        local skip_names    = {}
-        local page_lower    = page_text:lower()
+        local combined_text  = table.concat(texts, "\n---\n")
+        local combined_lower = combined_text:lower()
+        local all_chars      = self_ref.db:load(book_id)
+        local chars_in_text  = {}
+        local skip_names     = {}
         for _, c in ipairs(all_chars) do
-            local found = c.name and page_lower:find(c.name:lower(), 1, true)
+            local found = c.name and combined_lower:find(c.name:lower(), 1, true)
             if not found and c.aliases then
                 for _, alias in ipairs(c.aliases) do
-                    if alias ~= "" and page_lower:find(alias:lower(), 1, true) then
+                    if alias ~= "" and combined_lower:find(alias:lower(), 1, true) then
                         found = true; break
                     end
                 end
@@ -1281,38 +1296,36 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
 
         local characters, err, usage
         local ok, call_err = pcall(function()
-            characters, err, usage = client:extractCharacters(page_text, skip_names, chars_in_text, self_ref:getExtractionPrompt())
+            characters, err, usage = client:extractCharacters(combined_text, skip_names, chars_in_text, self_ref:getExtractionPrompt())
         end)
         if ok and not err then self_ref:recordUsage(usage) end
 
         if not ok then
-            logger.warn("CharExtractor: scan p=" .. p .. " pcall: " .. tostring(call_err))
+            logger.warn("CharExtractor: batch " .. batch_num .. " pcall: " .. tostring(call_err))
         elseif err then
-            logger.warn("CharExtractor: scan p=" .. p .. " api: " .. tostring(err))
+            logger.warn("CharExtractor: batch " .. batch_num .. " api: " .. tostring(err))
         elseif characters and #characters > 0 then
-            local ex_chars      = self_ref.db:load(book_id)
-            local ic            = findIncomingConflicts(ex_chars, characters)
-            local conflict_set  = {}
+            local ex_chars     = self_ref.db:load(book_id)
+            local ic           = findIncomingConflicts(ex_chars, characters)
+            local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
-                self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, p)
+                self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, batch_end)
                 enriched_names[c.existing_char.name] = true
-                logger.info("CharExtractor: scan auto-enriched '" .. c.existing_char.name .. "' from '" .. c.new_char.name .. "'")
+                logger.info("CharExtractor: batch auto-enriched '" .. c.existing_char.name .. "'")
             end
             local remaining = {}
             for _, c in ipairs(characters) do
                 if not conflict_set[(c.name or ""):lower()] then table.insert(remaining, c) end
             end
-            if #remaining > 0 then self_ref.db:merge(book_id, remaining, p) end
+            if #remaining > 0 then self_ref.db:merge(book_id, remaining, batch_end) end
             total_found = total_found + #characters
         end
 
-        -- Schedule next page after a short delay to respect API rate limits.
-        -- Using scheduleIn instead of os.execute("sleep") keeps the UI responsive.
-        UIManager:scheduleIn(3, function() processPage(p + 1) end)
+        UIManager:scheduleIn(3, function() processBatch(batch_end + 1) end)
     end
 
-    processPage(start_page)
+    processBatch(start_page)
 end
 
 function CharExtractor:onViewCharacters()
@@ -1643,6 +1656,7 @@ function CharExtractor:onClearDatabase()
         ok_text     = "Delete",
         ok_callback = function()
             self.db:clear(book_id)
+            self.db:clearScannedPages(book_id)
             self:showMsg("Character database cleared.", 3)
         end,
     })

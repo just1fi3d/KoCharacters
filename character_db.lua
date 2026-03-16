@@ -246,4 +246,54 @@ function CharacterDB:clear(book_md5)
     os.remove(path)
 end
 
+-- ---------------------------------------------------------------------------
+-- Scanned pages tracking
+-- ---------------------------------------------------------------------------
+function CharacterDB:scannedPath(book_md5)
+    local dir = DataStorage:getDataDir() .. "/charextractor"
+    util.makePath(dir)
+    return dir .. "/" .. book_md5 .. "_scanned.json"
+end
+
+-- Returns a set (table keyed by page number) of already-scanned pages
+function CharacterDB:loadScannedPages(book_md5)
+    local path = self:scannedPath(book_md5)
+    local f = io.open(path, "r")
+    if not f then return {} end
+    local content = f:read("*a")
+    f:close()
+    local list = json.decode(content) or {}
+    local set = {}
+    for _, p in ipairs(list) do set[p] = true end
+    return set
+end
+
+function CharacterDB:isPageScanned(book_md5, page_num)
+    return self:loadScannedPages(book_md5)[page_num] == true
+end
+
+function CharacterDB:markPageScanned(book_md5, page_num)
+    local set = self:loadScannedPages(book_md5)
+    if set[page_num] then return end
+    set[page_num] = true
+    local list = {}
+    for p in pairs(set) do table.insert(list, p) end
+    local f = io.open(self:scannedPath(book_md5), "w")
+    if f then f:write(json.encode(list)); f:close() end
+end
+
+-- Mark a range of pages as scanned in one file write
+function CharacterDB:markPagesScanned(book_md5, from_page, to_page)
+    local set = self:loadScannedPages(book_md5)
+    for p = from_page, to_page do set[p] = true end
+    local list = {}
+    for p in pairs(set) do table.insert(list, p) end
+    local f = io.open(self:scannedPath(book_md5), "w")
+    if f then f:write(json.encode(list)); f:close() end
+end
+
+function CharacterDB:clearScannedPages(book_md5)
+    os.remove(self:scannedPath(book_md5))
+end
+
 return CharacterDB
