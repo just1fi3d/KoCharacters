@@ -1421,16 +1421,18 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         end
     end
 
-    -- Spoiler protection: hide characters whose first_seen_page is ahead of current page
+    -- Spoiler protection: mask characters whose first_seen_page is ahead of current page
     if G_reader_settings:readSetting("kocharacters_spoiler_protection") then
         local cur_page = self:getCurrentPage() or 0
-        local visible  = {}
+        local masked = {}
         for _, c in ipairs(filtered) do
-            if not c.first_seen_page or c.first_seen_page <= cur_page then
-                table.insert(visible, c)
+            if c.first_seen_page and c.first_seen_page > cur_page then
+                table.insert(masked, { name = "Unknown character (page " .. c.first_seen_page .. ")", _spoiler = true })
+            else
+                table.insert(masked, c)
             end
         end
-        filtered = visible
+        filtered = masked
     end
 
     -- Sort
@@ -1507,6 +1509,9 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         local role = (c.role and c.role ~= "" and c.role ~= "unknown")
                      and (" [" .. c.role .. "]") or ""
         local char = c
+        if c._spoiler then
+            table.insert(items, { text = name, callback = function() end })
+        else
         table.insert(items, {
             text     = name .. role,
             callback = function()
@@ -1594,6 +1599,7 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                 UIManager:show(viewer)
             end,
         })
+        end  -- else (not spoiler)
     end
 
     local count_str = query ~= "" and (#filtered .. "/" .. #all_chars) or tostring(#all_chars)
