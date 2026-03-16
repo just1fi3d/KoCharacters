@@ -1161,13 +1161,74 @@ function CharExtractor:onScanChapter()
 end
 
 function CharExtractor:doChapterScan(book_id, start_page, end_page)
-    local client          = GeminiClient:new(self:getApiKey())
-    local page_count      = end_page - start_page + 1
-    local total_found     = 0
-    local enriched_names  = {}   -- track which existing chars were enriched
+    local client         = GeminiClient:new(self:getApiKey())
+    local page_count     = end_page - start_page + 1
+    local total_found    = 0
+    local enriched_names = {}
     local progress_msg
+    local self_ref       = self
 
+    local function doCleanup()
+        if progress_msg then UIManager:close(progress_msg); progress_msg = nil end
+
+        -- Clean up all enriched characters in one Gemini call
+        local enriched_list = {}
+        for _, c in ipairs(self_ref.db:load(book_id)) do
+            if enriched_names[c.name] then table.insert(enriched_list, c) end
+        end
+        if #enriched_list > 0 then
+            local cleanup_msg = InfoMessage:new{
+                text = "Cleaning up " .. #enriched_list .. " enriched character(s)..."
+            }
+            UIManager:show(cleanup_msg)
+            UIManager:forceRePaint()
+
+            local cleaned, cerr, cusage
+            local cok, ccall_err = pcall(function()
+                cleaned, cerr, cusage = client:cleanCharacters(enriched_list)
+            end)
+            UIManager:close(cleanup_msg)
+            if cok and not cerr then self_ref:recordUsage(cusage) end
+
+            if cok and not cerr and cleaned and type(cleaned) == "table" then
+                local all_chars = self_ref.db:load(book_id)
+                local changed   = false
+                for _, cc in ipairs(cleaned) do
+                    if cc.name then
+                        for _, orig in ipairs(all_chars) do
+                            if orig.name == cc.name then
+                                if cc.physical_description ~= nil       then orig.physical_description = cc.physical_description end
+                                if cc.personality          ~= nil       then orig.personality          = cc.personality          end
+                                if cc.role and cc.role ~= ""            then orig.role                 = cc.role                 end
+                                if type(cc.relationships) == "table"    then orig.relationships        = cc.relationships        end
+                                changed = true; break
+                            end
+                        end
+                    end
+                end
+                if changed then self_ref.db:save(book_id, all_chars) end
+            else
+                logger.warn("CharExtractor: scan cleanup failed: " .. tostring(ccall_err or cerr))
+            end
+        end
+
+        self_ref:showMsg(
+            "Chapter scan complete.\n"
+            .. "Pages scanned: " .. page_count .. "\n"
+            .. "Characters found/updated: " .. total_found,
+            6
+        )
+    end
+
+    -- processPage schedules itself via UIManager:scheduleIn so the UI event
+    -- loop is never blocked — prevents the Kindle from appearing hung during
+    -- long chapter scans.
     local function processPage(p)
+        if p > end_page then
+            doCleanup()
+            return
+        end
+
         if progress_msg then UIManager:close(progress_msg) end
         progress_msg = InfoMessage:new{
             text = "Scanning chapter...\nPage " .. (p - start_page + 1) .. " / " .. page_count,
@@ -1175,13 +1236,15 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
         UIManager:show(progress_msg)
         UIManager:forceRePaint()
 
-        local page_text, text_err = self:getCurrentPageText(p)
+        local page_text, text_err = self_ref:getCurrentPageText(p)
         if not page_text or #page_text < 20 then
             logger.info("CharExtractor: scan skip p=" .. p .. " " .. tostring(text_err or "too short"))
+            -- Yield briefly before moving to next page
+            UIManager:scheduleIn(0.5, function() processPage(p + 1) end)
             return
         end
 
-        local all_chars     = self.db:load(book_id)
+        local all_chars     = self_ref.db:load(book_id)
         local chars_in_text = {}
         local skip_names    = {}
         local page_lower    = page_text:lower()
@@ -1200,21 +1263,21 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
 
         local characters, err, usage
         local ok, call_err = pcall(function()
-            characters, err, usage = client:extractCharacters(page_text, skip_names, chars_in_text, self:getExtractionPrompt())
+            characters, err, usage = client:extractCharacters(page_text, skip_names, chars_in_text, self_ref:getExtractionPrompt())
         end)
-        if ok and not err then self:recordUsage(usage) end
+        if ok and not err then self_ref:recordUsage(usage) end
 
         if not ok then
             logger.warn("CharExtractor: scan p=" .. p .. " pcall: " .. tostring(call_err))
         elseif err then
             logger.warn("CharExtractor: scan p=" .. p .. " api: " .. tostring(err))
         elseif characters and #characters > 0 then
-            local ex_chars      = self.db:load(book_id)
+            local ex_chars      = self_ref.db:load(book_id)
             local ic            = findIncomingConflicts(ex_chars, characters)
             local conflict_set  = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
-                self.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, p)
+                self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, p)
                 enriched_names[c.existing_char.name] = true
                 logger.info("CharExtractor: scan auto-enriched '" .. c.existing_char.name .. "' from '" .. c.new_char.name .. "'")
             end
@@ -1222,68 +1285,16 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             for _, c in ipairs(characters) do
                 if not conflict_set[(c.name or ""):lower()] then table.insert(remaining, c) end
             end
-            if #remaining > 0 then self.db:merge(book_id, remaining, p) end
+            if #remaining > 0 then self_ref.db:merge(book_id, remaining, p) end
             total_found = total_found + #characters
         end
 
-        if p < end_page then
-            os.execute("sleep 3")
-        end
+        -- Schedule next page after a short delay to respect API rate limits.
+        -- Using scheduleIn instead of os.execute("sleep") keeps the UI responsive.
+        UIManager:scheduleIn(3, function() processPage(p + 1) end)
     end
 
-    for p = start_page, end_page do
-        processPage(p)
-    end
-
-    if progress_msg then UIManager:close(progress_msg) end
-
-    -- Clean up all enriched characters in one Gemini call
-    local enriched_list = {}
-    for _, c in ipairs(self.db:load(book_id)) do
-        if enriched_names[c.name] then table.insert(enriched_list, c) end
-    end
-    if #enriched_list > 0 then
-        local cleanup_msg = InfoMessage:new{
-            text = "Cleaning up " .. #enriched_list .. " enriched character(s)..."
-        }
-        UIManager:show(cleanup_msg)
-        UIManager:forceRePaint()
-
-        local cleaned, cerr, cusage
-        local cok, ccall_err = pcall(function()
-            cleaned, cerr, cusage = client:cleanCharacters(enriched_list)
-        end)
-        UIManager:close(cleanup_msg)
-        if cok and not cerr then self:recordUsage(cusage) end
-
-        if cok and not cerr and cleaned and type(cleaned) == "table" then
-            local all_chars = self.db:load(book_id)
-            local changed   = false
-            for _, cc in ipairs(cleaned) do
-                if cc.name then
-                    for _, orig in ipairs(all_chars) do
-                        if orig.name == cc.name then
-                            if cc.physical_description ~= nil       then orig.physical_description = cc.physical_description end
-                            if cc.personality          ~= nil       then orig.personality          = cc.personality          end
-                            if cc.role and cc.role ~= ""            then orig.role                 = cc.role                 end
-                            if type(cc.relationships) == "table"    then orig.relationships        = cc.relationships        end
-                            changed = true; break
-                        end
-                    end
-                end
-            end
-            if changed then self.db:save(book_id, all_chars) end
-        else
-            logger.warn("CharExtractor: scan cleanup failed: " .. tostring(ccall_err or cerr))
-        end
-    end
-
-    self:showMsg(
-        "Chapter scan complete.\n"
-        .. "Pages scanned: " .. page_count .. "\n"
-        .. "Characters found/updated: " .. total_found,
-        6
-    )
+    processPage(start_page)
 end
 
 function CharExtractor:onViewCharacters()
