@@ -60,6 +60,42 @@ local function findIncomingConflicts(existing, incoming)
     return conflicts
 end
 
+-- Collapse near-duplicate names within a single incoming batch before DB insertion.
+-- Merges the second into the first (fills in missing fields), returns deduped list.
+local function deduplicateIncoming(chars)
+    if #chars < 2 then return chars end
+    local removed = {}
+    for i = 1, #chars do
+        if not removed[i] then
+            local a = chars[i]
+            local a_low = (a.name or ""):lower()
+            for j = i + 1, #chars do
+                if not removed[j] then
+                    local b = chars[j]
+                    local b_low = (b.name or ""):lower()
+                    if #a_low >= 4 and #b_low >= 4 then
+                        local dist      = levenshtein(a_low, b_low)
+                        local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
+                        local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
+                        if dist <= threshold or substring then
+                            -- Merge b's non-empty fields into a
+                            if (a.role == nil or a.role == "") and b.role and b.role ~= "" then a.role = b.role end
+                            if (a.physical_description == nil or a.physical_description == "") and b.physical_description and b.physical_description ~= "" then a.physical_description = b.physical_description end
+                            if (a.personality == nil or a.personality == "") and b.personality and b.personality ~= "" then a.personality = b.personality end
+                            removed[j] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local result = {}
+    for i, c in ipairs(chars) do
+        if not removed[i] then table.insert(result, c) end
+    end
+    return result
+end
+
 local function findDuplicatePairs(characters)
     local pairs_found = {}
     for i = 1, #characters do
@@ -362,6 +398,7 @@ function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
 end
 
 function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
+    new_chars = deduplicateIncoming(new_chars)
     local existing  = self.db:load(book_id)
     local conflicts = findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
