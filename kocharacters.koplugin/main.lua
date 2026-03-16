@@ -1426,8 +1426,8 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         local cur_page = self:getCurrentPage() or 0
         local masked = {}
         for _, c in ipairs(filtered) do
-            if c.first_seen_page and c.first_seen_page > cur_page then
-                table.insert(masked, { name = "Unknown character (page " .. c.first_seen_page .. ")", _spoiler = true })
+            if not c.unlocked and c.first_seen_page and c.first_seen_page > cur_page then
+                table.insert(masked, { name = "Unknown character (page " .. c.first_seen_page .. ")", _spoiler = true, _real_name = c.name })
             else
                 table.insert(masked, c)
             end
@@ -1510,11 +1510,36 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                      and (" [" .. c.role .. "]") or ""
         local char = c
         if c._spoiler then
-            table.insert(items, { text = name, callback = function() end })
+            local real_name = c._real_name
+            table.insert(items, {
+                text = name,
+                callback = function()
+                    UIManager:show(ConfirmBox:new{
+                        text        = "Unlock this character and reveal their details?",
+                        ok_text     = "Unlock",
+                        ok_callback = function()
+                            local chars = self_ref.db:load(book_id)
+                            for _, ch in ipairs(chars) do
+                                if ch.name == real_name then
+                                    ch.unlocked = true
+                                    self_ref.db:updateCharacter(book_id, real_name, ch)
+                                    break
+                                end
+                            end
+                            self_ref:showCharacterBrowser(book_id, sort_mode, query)
+                        end,
+                    })
+                end,
+            })
         else
         table.insert(items, {
             text     = name .. role,
             callback = function()
+                -- Mark as unlocked so navigating back won't hide this character again
+                if not char.unlocked then
+                    char.unlocked = true
+                    self_ref.db:updateCharacter(book_id, char.name, char)
+                end
                 local viewer
                 viewer = TextViewer:new{
                     title  = name,
