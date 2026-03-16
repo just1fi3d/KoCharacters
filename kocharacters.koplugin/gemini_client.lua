@@ -47,6 +47,9 @@ Rules:
 - For existing characters: only return them if they actually appear in this passage. Preserve existing data and add/improve any fields.
 - For new characters: only include if there is enough information to build a meaningful profile.
 - If there is nothing to report, return an empty JSON array: []
+- For personality: infer stable character traits (e.g. "cautious", "hot-tempered", "fiercely loyal") from how characters act and react. Do NOT list events or actions — synthesize what those reveal about who they are.
+- For physical_description: summarise explicit appearance details only. Do not infer appearance from actions.
+- Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 
 Return ONLY a valid JSON array with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON array.
 Each element must follow this exact structure:
@@ -55,8 +58,8 @@ Each element must follow this exact structure:
     "name": "Full name or best available name",
     "aliases": ["nickname", "title"],
     "first_appearance_quote": "A short verbatim quote from the text where they first appear",
-    "physical_description": "Appearance details if mentioned, else empty string",
-    "personality": "Personality traits if mentioned, else empty string",
+    "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
+    "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
     "role": "protagonist or antagonist or supporting or unknown",
     "relationships": ["Relationship to other characters if mentioned"]
   }
@@ -74,7 +77,12 @@ You are updating the profile of a specific character in a novel based on a new p
 The character to update is:
 {{character}}
 
-Read the passage below and enrich the character's profile with any new information you find — additional physical details, personality traits, relationships, or context. Preserve all existing data; only add or improve fields.
+Read the passage below and enrich the character's profile with any new information. For personality and physical_description, merge new observations into the existing description — synthesising a coherent summary, not appending new events. Preserve all existing data; only add or improve.
+
+Rules:
+- For personality: infer stable traits from how the character acts and reacts. Write a synthesised description ("reckless and fiercely loyal"), never a list of actions ("jumped off a bridge to save his friend").
+- For physical_description: merge explicit appearance details only. No action-based inferences.
+- Never append raw actions or scene summaries to any field.
 
 If this character does not appear in the passage at all, return an empty JSON array: []
 
@@ -84,8 +92,8 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "name": "Full name or best available name",
     "aliases": ["nickname", "title"],
     "first_appearance_quote": "Keep existing quote unless a better one is found in this passage",
-    "physical_description": "Merged and improved appearance details",
-    "personality": "Merged and improved personality traits",
+    "physical_description": "Merged appearance summary — explicit descriptions only",
+    "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
     "role": "protagonist or antagonist or supporting or unknown",
     "relationships": ["Updated relationship list"]
   }
@@ -100,7 +108,11 @@ Passage:
 GeminiClient.DEFAULT_CLEANUP_PROMPT = [[
 You are cleaning up a character profile from a book. Some text fields contain repeated or redundant information because they were built up incrementally (e.g. "brave; brave" or "tall, dark hair; tall with dark hair").
 
-Clean up each text field by removing repetitions and combining redundant phrases into a single coherent description. Do not add new information. Keep the same tone and detail level.
+Clean up each text field:
+- Remove repetitions and redundant phrases
+- Combine fragmented observations into a single fluent description
+- If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
+- Do not add new information not present in the original fields
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
@@ -308,7 +320,11 @@ function GeminiClient:cleanCharacters(characters)
     local prompt = string.format([[
 You are cleaning up character profiles from a book. Some text fields contain repeated or redundant information because they were built up incrementally (e.g. "brave; brave" or "tall, dark hair; tall with dark hair").
 
-For each character, clean up the text fields by removing repetitions and combining redundant phrases into a single coherent description. Do not add new information.
+For each character, clean up the text fields:
+- Remove repetitions and redundant phrases
+- Combine fragmented observations into fluent descriptions
+- If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
+- Do not add new information not present in the original fields
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
 [{ "name": "...", "physical_description": "...", "personality": "...", "relationships": ["..."], "role": "..." }]

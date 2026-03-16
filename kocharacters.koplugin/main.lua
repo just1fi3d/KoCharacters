@@ -250,6 +250,8 @@ function KoCharacters:autoExtract(page_num)
     -- Mark page as scanned now so back/forward navigation won't re-trigger
     if page_num then self.db:markPageScanned(book_id, page_num) end
 
+    self:showScanIndicator()
+
     local existing   = self.db:load(book_id)
     local page_lower = page_text:lower()
     local skip_names, chars_in_text = {}, {}
@@ -274,6 +276,7 @@ function KoCharacters:autoExtract(page_num)
     if ok and not api_err then self:recordUsage(usage) end
 
     if not ok or api_err or not characters or #characters == 0 then
+        self:hideScanIndicator()
         self._auto_extracting = false
         return
     end
@@ -281,8 +284,9 @@ function KoCharacters:autoExtract(page_num)
     local cur_page = page_num or self:getCurrentPage()
     self:handleIncomingConflicts(book_id, characters, function(resolved)
         if #resolved > 0 then self.db:merge(book_id, resolved, cur_page) end
+        self:hideScanIndicator()
         self._auto_extracting = false
-        self:showMsg("Auto-extracted " .. #characters .. " character(s).", 3)
+        self:showExtractedCount(#characters)
     end, cur_page, true)
 end
 
@@ -305,6 +309,10 @@ function KoCharacters:addToMainMenu(menu_items)
             {
                 text     = _("Scan current chapter"),
                 callback = function() self:onScanChapter() end,
+            },
+            {
+                text     = _("Scan specific chapter..."),
+                callback = function() self:onScanSpecificChapter() end,
             },
             {
                 text     = _("View saved characters"),
@@ -337,6 +345,80 @@ end
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
+function KoCharacters:showScanIndicator()
+    if G_reader_settings:readSetting("kocharacters_scan_indicator") == false then return end
+    if self._scan_indicator then return end
+    local FrameContainer = require("ui/widget/container/framecontainer")
+    local ImageWidget    = require("ui/widget/imagewidget")
+    local Blitbuffer     = require("ffi/blitbuffer")
+    local icon_path      = debug.getinfo(1, "S").source:sub(2):match("(.+/)") .. "assets/scanning.svg"
+    self._scan_indicator = FrameContainer:new{
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 0,
+        padding    = 4,
+        ImageWidget:new{
+            file   = icon_path,
+            width  = 40,
+            height = 40,
+        },
+    }
+    UIManager:show(self._scan_indicator)
+    UIManager:setDirty(self._scan_indicator, "fast")
+    UIManager:forceRePaint()
+end
+
+function KoCharacters:hideScanIndicator()
+    if self._scan_indicator then
+        UIManager:close(self._scan_indicator)
+        self._scan_indicator = nil
+    end
+end
+
+function KoCharacters:showExtractedCount(count)
+    if self._count_indicator then
+        UIManager:close(self._count_indicator)
+        if self._count_indicator_timer then
+            UIManager:unschedule(self._count_indicator_timer)
+        end
+    end
+    local FrameContainer   = require("ui/widget/container/framecontainer")
+    local HorizontalGroup  = require("ui/widget/horizontalgroup")
+    local ImageWidget      = require("ui/widget/imagewidget")
+    local TextWidget       = require("ui/widget/textwidget")
+    local Font             = require("ui/font")
+    local Blitbuffer       = require("ffi/blitbuffer")
+    local plugin_dir       = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
+    self._count_indicator = FrameContainer:new{
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 0,
+        padding    = 4,
+        HorizontalGroup:new{
+            ImageWidget:new{
+                file   = plugin_dir .. "assets/characters.svg",
+                width  = 40,
+                height = 40,
+            },
+            TextWidget:new{
+                text = tostring(count),
+                face = Font:getFace("cfont", 20),
+            },
+        },
+    }
+    UIManager:show(self._count_indicator)
+    UIManager:setDirty(self._count_indicator, "fast")
+    UIManager:forceRePaint()
+    self._count_indicator_timer = function()
+        self._count_indicator_timer = nil
+        if self._count_indicator then
+            UIManager:close(self._count_indicator)
+            UIManager:setDirty(nil, "fast")
+            UIManager:forceRePaint()
+            self._count_indicator = nil
+        end
+    end
+    UIManager:scheduleIn(4, self._count_indicator_timer)
+end
+
 function KoCharacters:showMsg(text, timeout)
     UIManager:show(InfoMessage:new{
         text    = text,
@@ -593,10 +675,12 @@ function KoCharacters:getRelationshipMapPrompt()
 end
 
 function KoCharacters:recordUsage(usage)
-    if not usage then return end
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
-    local path        = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
+    local util        = require("util")
+    local dir         = DataStorage:getDataDir() .. "/kocharacters"
+    util.makePath(dir)
+    local path = dir .. "/usage_stats.json"
 
     local stats = {}
     local f = io.open(path, "r")
@@ -610,8 +694,8 @@ function KoCharacters:recordUsage(usage)
         stats[date] = { calls = 0, prompt_tokens = 0, output_tokens = 0 }
     end
     stats[date].calls         = (stats[date].calls         or 0) + 1
-    stats[date].prompt_tokens = (stats[date].prompt_tokens or 0) + (usage.prompt_tokens or 0)
-    stats[date].output_tokens = (stats[date].output_tokens or 0) + (usage.output_tokens or 0)
+    stats[date].prompt_tokens = (stats[date].prompt_tokens or 0) + (usage and usage.prompt_tokens or 0)
+    stats[date].output_tokens = (stats[date].output_tokens or 0) + (usage and usage.output_tokens or 0)
 
     local fw = io.open(path, "w")
     if fw then fw:write(json.encode(stats)); fw:close() end
@@ -1293,6 +1377,102 @@ function KoCharacters:onScanChapter()
     })
 end
 
+function KoCharacters:onScanSpecificChapter()
+    logger.info("KoCharacters: onScanSpecificChapter called")
+
+    local api_key = self:getApiKey()
+    if api_key == "" then
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local book_id = self:getBookID()
+    if not book_id then
+        self:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+
+    local doc = self.ui and self.ui.document
+    if not doc then
+        self:showMsg("No document open.")
+        return
+    end
+
+    local ok_toc, toc = pcall(function() return doc:getToc() end)
+    if not ok_toc or type(toc) ~= "table" or #toc == 0 then
+        self:showMsg("No table of contents found in this book.")
+        return
+    end
+
+    local total_pages
+    pcall(function() total_pages = doc:getPageCount() end)
+    total_pages = total_pages or 9999
+
+    -- Build chapter list with page ranges
+    local chapters = {}
+    for i, entry in ipairs(toc) do
+        local start_p = tonumber(entry.page) or 1
+        local end_p
+        local next_entry = toc[i + 1]
+        if next_entry then
+            end_p = math.max(start_p, (tonumber(next_entry.page) or start_p + 1) - 1)
+        else
+            end_p = total_pages
+        end
+        table.insert(chapters, {
+            title    = entry.title or ("Chapter " .. i),
+            start_p  = start_p,
+            end_p    = end_p,
+        })
+    end
+
+    local ok, Menu = pcall(require, "ui/widget/menu")
+    if not ok or not Menu then return end
+
+    local scanned = self.db:loadScannedPages(book_id)
+
+    local self_ref = self
+    local items = {}
+    for _, ch in ipairs(chapters) do
+        local ch_ref = ch
+        local total_pages = ch_ref.end_p - ch_ref.start_p + 1
+        local scanned_count = 0
+        for p = ch_ref.start_p, ch_ref.end_p do
+            if scanned[p] then scanned_count = scanned_count + 1 end
+        end
+        local scan_label = ""
+        if scanned_count == total_pages then
+            scan_label = " [✓ done]"
+        elseif scanned_count > 0 then
+            scan_label = " [~ " .. scanned_count .. "/" .. total_pages .. " pages]"
+        end
+        table.insert(items, {
+            text = ch_ref.title .. "  (pp. " .. ch_ref.start_p .. "–" .. ch_ref.end_p .. ")" .. scan_label,
+            callback = function()
+                local page_count = ch_ref.end_p - ch_ref.start_p + 1
+                UIManager:show(ConfirmBox:new{
+                    text    = 'Scan "' .. ch_ref.title .. '"\n'
+                              .. "Pages " .. ch_ref.start_p .. "–" .. ch_ref.end_p
+                              .. " (" .. page_count .. " page(s))?",
+                    ok_text = "Scan",
+                    ok_callback = function()
+                        self_ref:checkAndWarnDuplicates(book_id, function()
+                            self_ref:doChapterScan(book_id, ch_ref.start_p, ch_ref.end_p)
+                        end)
+                    end,
+                })
+            end,
+        })
+    end
+
+    UIManager:show(Menu:new{
+        title      = "Select Chapter to Scan",
+        item_table = items,
+        width      = Screen:getWidth(),
+        show_parent = self.ui,
+    })
+end
+
 function KoCharacters:doChapterScan(book_id, start_page, end_page)
     local PAGES_PER_BATCH = 4
 
@@ -1938,6 +2118,15 @@ function KoCharacters:onOpenSettings()
                     }
                     UIManager:show(dialog)
                     dialog:onShowKeyboard()
+                end,
+            },
+            {
+                text = "Scan indicator icon: "
+                    .. (G_reader_settings:readSetting("kocharacters_scan_indicator") ~= false and "ON" or "OFF"),
+                callback = function()
+                    local on = G_reader_settings:readSetting("kocharacters_scan_indicator") ~= false
+                    G_reader_settings:saveSetting("kocharacters_scan_indicator", not on)
+                    self:showMsg("Scan indicator: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
             {
