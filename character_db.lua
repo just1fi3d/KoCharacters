@@ -1,0 +1,249 @@
+-- character_db.lua
+-- Manages per-book character storage using JSON files in the history directory
+
+local json        = require("dkjson")
+local DataStorage = require("datastorage")
+local util        = require("util")
+
+-- Merge two text fields: skip if one already contains the other (case-insensitive)
+local function mergeText(a, b)
+    if not a or a == "" then return b or "" end
+    if not b or b == "" then return a end
+    if a == b then return a end
+    local al, bl = a:lower(), b:lower()
+    if al:find(bl, 1, true) then return a end
+    if bl:find(al, 1, true) then return b end
+    return a .. "; " .. b
+end
+
+local CharacterDB = {}
+CharacterDB.__index = CharacterDB
+
+-- Return the path to the JSON file for a given book MD5
+function CharacterDB:dbPath(book_md5)
+    local dir = DataStorage:getDataDir() .. "/charextractor"
+    -- Ensure directory exists using KOReader's util
+    util.makePath(dir)
+    return dir .. "/" .. book_md5 .. ".json"
+end
+
+-- Load the character list for a book (returns empty table if none saved)
+function CharacterDB:load(book_md5)
+    local path = self:dbPath(book_md5)
+    local f = io.open(path, "r")
+    if not f then
+        return {}
+    end
+    local content = f:read("*a")
+    f:close()
+    local data, _, err = json.decode(content)
+    if not data then
+        return {}
+    end
+    return data
+end
+
+-- Save the full character list for a book
+function CharacterDB:save(book_md5, characters)
+    local path = self:dbPath(book_md5)
+    local f = io.open(path, "w")
+    if not f then
+        return false, "Cannot write to " .. path
+    end
+    f:write(json.encode(characters, { indent = true }))
+    f:close()
+    return true
+end
+
+-- Merge new characters into the existing DB.
+-- Existing characters whose name matches are updated (replaced); new names are appended.
+-- Returns: merged list, count of newly added
+function CharacterDB:merge(book_md5, new_characters, page_num)
+    local existing = self:load(book_md5)
+
+    -- Build index: lowercased name/alias -> position in existing list
+    local name_to_idx = {}
+    for i, c in ipairs(existing) do
+        if c.name then name_to_idx[c.name:lower()] = i end
+        if c.aliases then
+            for _, alias in ipairs(c.aliases) do
+                if alias ~= "" then name_to_idx[alias:lower()] = i end
+            end
+        end
+    end
+
+    local added = 0
+    local changed = false
+    for _, c in ipairs(new_characters) do
+        if c.name then
+            local idx = name_to_idx[c.name:lower()]
+            if idx then
+                local notes      = existing[idx].user_notes   -- never overwrite user notes
+                local first_seen = existing[idx].first_seen_page  -- set once, never updated
+                existing[idx] = c
+                if notes      and notes ~= "" then existing[idx].user_notes      = notes      end
+                if first_seen                 then existing[idx].first_seen_page  = first_seen end
+                if page_num                   then existing[idx].source_page      = page_num   end
+                changed = true
+            else
+                if page_num then c.source_page = page_num; c.first_seen_page = page_num end
+                table.insert(existing, c)
+                name_to_idx[c.name:lower()] = #existing
+                added = added + 1
+                changed = true
+            end
+        end
+    end
+
+    if changed then
+        self:save(book_md5, existing)
+    end
+
+    return existing, added
+end
+
+-- Return a flat list of known character names for the Claude prompt
+function CharacterDB:getKnownNames(book_md5)
+    local characters = self:load(book_md5)
+    local names = {}
+    for _, c in ipairs(characters) do
+        table.insert(names, c.name)
+        if c.aliases then
+            for _, alias in ipairs(c.aliases) do
+                table.insert(names, alias)
+            end
+        end
+    end
+    return names
+end
+
+-- Merge source character into target: combines fields, removes source
+function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
+    local characters = self:load(book_md5)
+    local source, target, source_idx = nil, nil, nil
+    for i, c in ipairs(characters) do
+        if c.name == source_name then source = c; source_idx = i end
+        if c.name == target_name then target = c end
+    end
+    if not source or not target or not source_idx then return false end
+
+    -- Aliases: union of both, plus the source name itself
+    local alias_set = {}
+    for _, a in ipairs(target.aliases or {}) do if a ~= "" then alias_set[a] = true end end
+    for _, a in ipairs(source.aliases or {}) do if a ~= "" then alias_set[a] = true end end
+    alias_set[source_name] = true  -- source name becomes an alias of target
+    local merged_aliases = {}
+    for a in pairs(alias_set) do table.insert(merged_aliases, a) end
+
+
+    -- Relationships: union
+    local rel_set = {}
+    for _, r in ipairs(target.relationships or {}) do if r ~= "" then rel_set[r] = true end end
+    for _, r in ipairs(source.relationships or {}) do if r ~= "" then rel_set[r] = true end end
+    local merged_rels = {}
+    for r in pairs(rel_set) do table.insert(merged_rels, r) end
+
+    -- Role: prefer a non-unknown value
+    local role = target.role or "unknown"
+    if (role == "unknown" or role == "") and source.role and source.role ~= "unknown" then
+        role = source.role
+    end
+
+    -- First appearance quote: keep target's if set
+    local quote = target.first_appearance_quote or ""
+    if quote == "" then quote = source.first_appearance_quote or "" end
+
+    local notes_a = target.user_notes or ""
+    local notes_b = source.user_notes or ""
+    local merged_notes = notes_a ~= "" and notes_b ~= "" and (notes_a .. "\n" .. notes_b)
+                      or notes_a ~= "" and notes_a
+                      or notes_b ~= "" and notes_b
+                      or nil
+
+    target.aliases                = merged_aliases
+    target.physical_description   = mergeText(target.physical_description, source.physical_description)
+    target.personality            = mergeText(target.personality, source.personality)
+    target.relationships          = merged_rels
+    target.role                   = role
+    target.first_appearance_quote = quote
+    target.user_notes             = merged_notes
+
+    table.remove(characters, source_idx)
+    self:save(book_md5, characters)
+    return true
+end
+
+-- Enrich an existing character with data from an external profile (not in DB)
+-- The external name becomes an alias; all fields are merged.
+function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
+    local characters = self:load(book_md5)
+    for _, c in ipairs(characters) do
+        if c.name == existing_name then
+            local alias_set = {}
+            for _, a in ipairs(c.aliases   or {}) do if a ~= "" then alias_set[a] = true end end
+            for _, a in ipairs(extra.aliases or {}) do if a ~= "" then alias_set[a] = true end end
+            if extra.name and extra.name ~= existing_name then alias_set[extra.name] = true end
+            local merged_aliases = {}
+            for a in pairs(alias_set) do table.insert(merged_aliases, a) end
+
+
+            local rel_set = {}
+            for _, r in ipairs(c.relationships   or {}) do if r ~= "" then rel_set[r] = true end end
+            for _, r in ipairs(extra.relationships or {}) do if r ~= "" then rel_set[r] = true end end
+            local merged_rels = {}
+            for r in pairs(rel_set) do table.insert(merged_rels, r) end
+
+            local role = c.role or "unknown"
+            if (role == "unknown" or role == "") and extra.role and extra.role ~= "unknown" then
+                role = extra.role
+            end
+
+            c.aliases              = merged_aliases
+            c.physical_description = mergeText(c.physical_description, extra.physical_description)
+            c.personality          = mergeText(c.personality,          extra.personality)
+            c.relationships        = merged_rels
+            c.role                 = role
+            if (not c.first_appearance_quote or c.first_appearance_quote == "") and extra.first_appearance_quote then
+                c.first_appearance_quote = extra.first_appearance_quote
+            end
+            if page_num then c.source_page = page_num end
+
+            self:save(book_md5, characters)
+            return true
+        end
+    end
+    return false
+end
+
+-- Update a character record in place, looked up by original_name
+function CharacterDB:updateCharacter(book_md5, original_name, updated_char)
+    local characters = self:load(book_md5)
+    for i, c in ipairs(characters) do
+        if c.name == original_name then
+            characters[i] = updated_char
+            self:save(book_md5, characters)
+            return true
+        end
+    end
+    return false
+end
+
+-- Delete a single character by name from a book's database
+function CharacterDB:deleteCharacter(book_md5, name)
+    local characters = self:load(book_md5)
+    local new_list = {}
+    for _, c in ipairs(characters) do
+        if c.name ~= name then
+            table.insert(new_list, c)
+        end
+    end
+    self:save(book_md5, new_list)
+end
+
+-- Delete the database for a book
+function CharacterDB:clear(book_md5)
+    local path = self:dbPath(book_md5)
+    os.remove(path)
+end
+
+return CharacterDB
