@@ -1243,8 +1243,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
             local enriched_name_strs = {}
             for _, ec in ipairs(enriched_list) do table.insert(enriched_name_strs, ec.name or "?") end
             local cleanup_msg = InfoMessage:new{
-                text = "Cleaning up " .. #enriched_list .. " enriched character(s):\n"
-                       .. table.concat(enriched_name_strs, ", ")
+                text = "Cleaning up " .. #enriched_list .. " enriched character(s)..."
             }
             UIManager:show(cleanup_msg)
             UIManager:forceRePaint()
@@ -1262,7 +1261,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
                 for i, cc in ipairs(cleaned) do
                     if cc.name then
                         local apply_msg = InfoMessage:new{
-                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. "..."
                         }
                         UIManager:show(apply_msg)
                         UIManager:forceRePaint()
