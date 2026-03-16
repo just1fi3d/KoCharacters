@@ -177,6 +177,31 @@ function KoCharacters:init()
     self._pending_extract = nil
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
+
+    -- Add "Find character" option to the word selection / highlight popup
+    if self.ui.highlight and self.ui.highlight.addToHighlightDialog then
+        local self_ref = self
+        self.ui.highlight:addToHighlightDialog("kocharacters_lookup", function(highlight_instance)
+            return {
+                text = "Find character",
+                enabled_func = function()
+                    local book_id = self_ref:getBookID()
+                    if not book_id then return false end
+                    return #self_ref.db:load(book_id) > 0
+                end,
+                callback = function()
+                    local selected = highlight_instance.selected_text
+                    local word = selected and (selected.text or selected.word or "") or ""
+                    word = word:match("^%s*(.-)%s*$") or ""
+                    if highlight_instance.highlight_dialog then
+                        UIManager:close(highlight_instance.highlight_dialog)
+                    end
+                    self_ref:onWordCharacterLookup(word)
+                end,
+            }
+        end)
+    end
+
     logger.info("KoCharacters: plugin initialised")
 end
 
@@ -2649,6 +2674,88 @@ function KoCharacters:onShowLimits()
         width  = math.floor(Screen:getWidth() * 0.9),
         height = math.floor(Screen:getHeight() * 0.85),
     })
+end
+
+-- ---------------------------------------------------------------------------
+-- Word-selection character lookup (called from highlight popup)
+-- ---------------------------------------------------------------------------
+function KoCharacters:onWordCharacterLookup(word)
+    if not word or word == "" then
+        self:showMsg("No word selected.")
+        return
+    end
+
+    local book_id = self:getBookID()
+    if not book_id then
+        self:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+
+    local all_chars = self.db:load(book_id)
+    if #all_chars == 0 then
+        self:showMsg("No characters saved yet for this book.\nUse 'Extract characters from this page' first.")
+        return
+    end
+
+    -- Match characters whose name or any alias contains the selected word
+    local word_lower = word:lower()
+    local matches = {}
+    for _, c in ipairs(all_chars) do
+        local found = (c.name or ""):lower():find(word_lower, 1, true)
+        if not found then
+            for _, alias in ipairs(c.aliases or {}) do
+                if alias:lower():find(word_lower, 1, true) then
+                    found = true
+                    break
+                end
+            end
+        end
+        if found then table.insert(matches, c) end
+    end
+
+    if #matches == 0 then
+        self:showMsg('"' .. word .. '" not found in character database.')
+        return
+    end
+
+    if #matches == 1 then
+        local char = matches[1]
+        local self_ref = self
+        local viewer
+        viewer = TextViewer:new{
+            title  = char.name,
+            text   = self:formatCharacter(char),
+            width  = math.floor(Screen:getWidth() * 0.9),
+            height = math.floor(Screen:getHeight() * 0.85),
+            buttons_table = {
+                {
+                    {
+                        text     = "Re-analyze",
+                        callback = function()
+                            UIManager:close(viewer)
+                            self_ref:onReanalyzeCharacter(book_id, char)
+                        end,
+                    },
+                    {
+                        text     = "Edit",
+                        callback = function()
+                            UIManager:close(viewer)
+                            self_ref:onEditCharacter(book_id, char)
+                        end,
+                    },
+                    {
+                        text     = "Close",
+                        callback = function() UIManager:close(viewer) end,
+                    },
+                },
+            },
+        }
+        UIManager:show(viewer)
+        return
+    end
+
+    -- Multiple matches — open browser pre-filtered by the selected word
+    self:showCharacterBrowser(book_id, "default", word)
 end
 
 return KoCharacters
