@@ -311,19 +311,54 @@ end
 function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
     local characters = self.db:load(book_id)
     if #characters < 2 then on_continue(); return end
-    local pairs = findDuplicatePairs(characters)
-    if #pairs == 0 then on_continue(); return end
+    local dup_pairs = findDuplicatePairs(characters)
+    if #dup_pairs == 0 then on_continue(); return end
 
-    local lines = { "Possible duplicate characters detected:" }
-    for _, p in ipairs(pairs) do
-        table.insert(lines, '  \xE2\x80\xA2 "' .. p[1] .. '" and "' .. p[2] .. '"')
+    local self_ref = self
+
+    local function processPairs(remaining)
+        if #remaining == 0 then on_continue(); return end
+
+        local p    = remaining[1]
+        local rest = { table.unpack(remaining, 2) }
+        local a, b = p[1], p[2]
+
+        local viewer
+        viewer = TextViewer:new{
+            title  = "Possible duplicate " .. (#dup_pairs - #remaining + 1) .. "/" .. #dup_pairs,
+            text   = '"' .. a .. '" and "' .. b .. '" look like the same character.\n\nMerge them?',
+            width  = math.floor(Screen:getWidth() * 0.9),
+            height = math.floor(Screen:getHeight() * 0.6),
+            buttons_table = {{
+                {
+                    text     = 'Merge into "' .. b .. '"',
+                    callback = function()
+                        UIManager:close(viewer)
+                        self_ref.db:mergeCharacters(book_id, a, b)
+                        processPairs(rest)
+                    end,
+                },
+                {
+                    text     = 'Merge into "' .. a .. '"',
+                    callback = function()
+                        UIManager:close(viewer)
+                        self_ref.db:mergeCharacters(book_id, b, a)
+                        processPairs(rest)
+                    end,
+                },
+                {
+                    text     = "Skip",
+                    callback = function()
+                        UIManager:close(viewer)
+                        processPairs(rest)
+                    end,
+                },
+            }},
+        }
+        UIManager:show(viewer)
     end
-    table.insert(lines, "\nContinue extraction anyway?")
-    UIManager:show(ConfirmBox:new{
-        text        = table.concat(lines, "\n"),
-        ok_text     = "Continue",
-        ok_callback = on_continue,
-    })
+
+    processPairs(dup_pairs)
 end
 
 function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
