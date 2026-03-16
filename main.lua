@@ -329,8 +329,11 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
         end
 
         -- One Gemini call to clean up all enriched profiles
+        local enriched_names_list = {}
+        for _, ec in ipairs(enriched_chars) do table.insert(enriched_names_list, ec.name or "?") end
         local working_msg = InfoMessage:new{
-            text = "Cleaning up " .. #enriched_chars .. " enriched character(s)..."
+            text = "Cleaning up " .. #enriched_chars .. " enriched character(s):\n"
+                   .. table.concat(enriched_names_list, ", ")
         }
         UIManager:show(working_msg)
         UIManager:forceRePaint()
@@ -346,8 +349,13 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
         if ok and not err and cleaned and type(cleaned) == "table" then
             local all_chars = self_ref.db:load(book_id)
             local changed   = false
-            for _, cc in ipairs(cleaned) do
+            for i, cc in ipairs(cleaned) do
                 if cc.name then
+                    local apply_msg = InfoMessage:new{
+                        text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                    }
+                    UIManager:show(apply_msg)
+                    UIManager:forceRePaint()
                     for _, orig in ipairs(all_chars) do
                         if orig.name == cc.name then
                             if cc.physical_description ~= nil then orig.physical_description = cc.physical_description end
@@ -358,6 +366,7 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
                             break
                         end
                     end
+                    UIManager:close(apply_msg)
                 end
             end
             if changed then self_ref.db:save(book_id, all_chars) end
@@ -1177,8 +1186,11 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             if enriched_names[c.name] then table.insert(enriched_list, c) end
         end
         if #enriched_list > 0 then
+            local enriched_name_strs = {}
+            for _, ec in ipairs(enriched_list) do table.insert(enriched_name_strs, ec.name or "?") end
             local cleanup_msg = InfoMessage:new{
-                text = "Cleaning up " .. #enriched_list .. " enriched character(s)..."
+                text = "Cleaning up " .. #enriched_list .. " enriched character(s):\n"
+                       .. table.concat(enriched_name_strs, ", ")
             }
             UIManager:show(cleanup_msg)
             UIManager:forceRePaint()
@@ -1193,8 +1205,13 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             if cok and not cerr and cleaned and type(cleaned) == "table" then
                 local all_chars = self_ref.db:load(book_id)
                 local changed   = false
-                for _, cc in ipairs(cleaned) do
+                for i, cc in ipairs(cleaned) do
                     if cc.name then
+                        local apply_msg = InfoMessage:new{
+                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                        }
+                        UIManager:show(apply_msg)
+                        UIManager:forceRePaint()
                         for _, orig in ipairs(all_chars) do
                             if orig.name == cc.name then
                                 if cc.physical_description ~= nil       then orig.physical_description = cc.physical_description end
@@ -1204,6 +1221,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
                                 changed = true; break
                             end
                         end
+                        UIManager:close(apply_msg)
                     end
                 end
                 if changed then self_ref.db:save(book_id, all_chars) end
