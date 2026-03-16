@@ -328,41 +328,45 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
             return
         end
 
-        -- Clean up each enriched profile individually, showing progress per character
-        local client    = GeminiClient:new(self_ref:getApiKey())
-        local all_chars = self_ref.db:load(book_id)
-        local changed   = false
-        for i, ec in ipairs(enriched_chars) do
-            local working_msg = InfoMessage:new{
-                text = "Cleaning up character " .. i .. "/" .. #enriched_chars
-                       .. ": " .. (ec.name or "?") .. "..."
-            }
-            UIManager:show(working_msg)
-            UIManager:forceRePaint()
+        -- One Gemini call to clean up all enriched profiles
+        local enriched_names_list = {}
+        for _, ec in ipairs(enriched_chars) do table.insert(enriched_names_list, ec.name or "?") end
+        local working_msg = InfoMessage:new{
+            text = "Cleaning up " .. #enriched_chars .. " enriched character(s):\n"
+                   .. table.concat(enriched_names_list, ", ")
+        }
+        UIManager:show(working_msg)
+        UIManager:forceRePaint()
 
-            local cleaned, err, usage1
-            local ok, call_err = pcall(function()
-                cleaned, err, usage1 = client:cleanCharacter(ec)
-            end)
-            UIManager:close(working_msg)
-            if ok and not err then self_ref:recordUsage(usage1) end
+        local client = GeminiClient:new(self_ref:getApiKey())
+        local cleaned, err, usage1
+        local ok, call_err = pcall(function()
+            cleaned, err, usage1 = client:cleanCharacters(enriched_chars)
+        end)
+        UIManager:close(working_msg)
+        if ok and not err then self_ref:recordUsage(usage1) end
 
-            if ok and not err and cleaned and type(cleaned) == "table" then
-                for _, orig in ipairs(all_chars) do
-                    if orig.name == ec.name then
-                        if cleaned.physical_description ~= nil          then orig.physical_description = cleaned.physical_description end
-                        if cleaned.personality          ~= nil          then orig.personality          = cleaned.personality          end
-                        if cleaned.role and cleaned.role ~= ""          then orig.role                 = cleaned.role                 end
-                        if type(cleaned.relationships)  == "table"      then orig.relationships        = cleaned.relationships        end
-                        changed = true
-                        break
+        if ok and not err and cleaned and type(cleaned) == "table" then
+            local all_chars = self_ref.db:load(book_id)
+            local changed   = false
+            for _, cc in ipairs(cleaned) do
+                if cc.name then
+                    for _, orig in ipairs(all_chars) do
+                        if orig.name == cc.name then
+                            if cc.physical_description ~= nil then orig.physical_description = cc.physical_description end
+                            if cc.personality          ~= nil then orig.personality          = cc.personality          end
+                            if cc.role and cc.role ~= ""      then orig.role                 = cc.role                 end
+                            if type(cc.relationships) == "table" then orig.relationships     = cc.relationships        end
+                            changed = true
+                            break
+                        end
                     end
                 end
-            else
-                logger.warn("CharExtractor: cleanup failed for '" .. (ec.name or "?") .. "': " .. tostring(call_err or err))
             end
+            if changed then self_ref.db:save(book_id, all_chars) end
+        else
+            logger.warn("CharExtractor: batch cleanup failed: " .. tostring(call_err or err))
         end
-        if changed then self_ref.db:save(book_id, all_chars) end
 
         on_done(resolved)
     end
@@ -1176,38 +1180,42 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             if enriched_names[c.name] then table.insert(enriched_list, c) end
         end
         if #enriched_list > 0 then
-            local all_chars = self_ref.db:load(book_id)
-            local changed   = false
-            for i, ec in ipairs(enriched_list) do
-                local cleanup_msg = InfoMessage:new{
-                    text = "Cleaning up character " .. i .. "/" .. #enriched_list
-                           .. ": " .. (ec.name or "?") .. "..."
-                }
-                UIManager:show(cleanup_msg)
-                UIManager:forceRePaint()
+            local enriched_name_strs = {}
+            for _, ec in ipairs(enriched_list) do table.insert(enriched_name_strs, ec.name or "?") end
+            local cleanup_msg = InfoMessage:new{
+                text = "Cleaning up " .. #enriched_list .. " enriched character(s):\n"
+                       .. table.concat(enriched_name_strs, ", ")
+            }
+            UIManager:show(cleanup_msg)
+            UIManager:forceRePaint()
 
-                local cleaned, cerr, cusage
-                local cok, ccall_err = pcall(function()
-                    cleaned, cerr, cusage = client:cleanCharacter(ec)
-                end)
-                UIManager:close(cleanup_msg)
-                if cok and not cerr then self_ref:recordUsage(cusage) end
+            local cleaned, cerr, cusage
+            local cok, ccall_err = pcall(function()
+                cleaned, cerr, cusage = client:cleanCharacters(enriched_list)
+            end)
+            UIManager:close(cleanup_msg)
+            if cok and not cerr then self_ref:recordUsage(cusage) end
 
-                if cok and not cerr and cleaned and type(cleaned) == "table" then
-                    for _, orig in ipairs(all_chars) do
-                        if orig.name == ec.name then
-                            if cleaned.physical_description ~= nil      then orig.physical_description = cleaned.physical_description end
-                            if cleaned.personality          ~= nil      then orig.personality          = cleaned.personality          end
-                            if cleaned.role and cleaned.role ~= ""      then orig.role                 = cleaned.role                 end
-                            if type(cleaned.relationships)  == "table"  then orig.relationships        = cleaned.relationships        end
-                            changed = true; break
+            if cok and not cerr and cleaned and type(cleaned) == "table" then
+                local all_chars = self_ref.db:load(book_id)
+                local changed   = false
+                for _, cc in ipairs(cleaned) do
+                    if cc.name then
+                        for _, orig in ipairs(all_chars) do
+                            if orig.name == cc.name then
+                                if cc.physical_description ~= nil       then orig.physical_description = cc.physical_description end
+                                if cc.personality          ~= nil       then orig.personality          = cc.personality          end
+                                if cc.role and cc.role ~= ""            then orig.role                 = cc.role                 end
+                                if type(cc.relationships) == "table"    then orig.relationships        = cc.relationships        end
+                                changed = true; break
+                            end
                         end
                     end
-                else
-                    logger.warn("CharExtractor: scan cleanup failed for '" .. (ec.name or "?") .. "': " .. tostring(ccall_err or cerr))
                 end
+                if changed then self_ref.db:save(book_id, all_chars) end
+            else
+                logger.warn("CharExtractor: scan cleanup failed: " .. tostring(ccall_err or cerr))
             end
-            if changed then self_ref.db:save(book_id, all_chars) end
         end
 
         self_ref:showMsg(
