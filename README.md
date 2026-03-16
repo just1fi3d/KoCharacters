@@ -95,8 +95,8 @@ Sends all saved character profiles to Gemini in one call and asks it to produce 
 
 | Path | Contents |
 |---|---|
-| `<koreader_data>/charextractor/<book_id>.json` | Per-book character database |
-| `<koreader_data>/charextractor/<book_id>_scanned.json` | Scanned page index |
+| `<koreader_data>/kocharacters/<book_id>.json` | Per-book character database |
+| `<koreader_data>/kocharacters/<book_id>_scanned.json` | Scanned page index |
 | `<koreader_data>/kocharacters/usage_stats.json` | Daily Gemini API usage log |
 | `<koreader_data>/kocharacters/<book_id>_characters.txt` | Exported character list |
 

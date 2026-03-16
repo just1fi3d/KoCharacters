@@ -21,7 +21,7 @@ CharacterDB.__index = CharacterDB
 
 -- Return the path to the JSON file for a given book MD5
 function CharacterDB:dbPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/charextractor"
+    local dir = DataStorage:getDataDir() .. "/kocharacters"
     -- Ensure directory exists using KOReader's util
     util.makePath(dir)
     return dir .. "/" .. book_md5 .. ".json"
@@ -207,6 +207,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
                 c.first_appearance_quote = extra.first_appearance_quote
             end
             if page_num then c.source_page = page_num end
+            c.needs_cleanup = true
 
             self:save(book_md5, characters)
             return true
@@ -250,7 +251,7 @@ end
 -- Scanned pages tracking
 -- ---------------------------------------------------------------------------
 function CharacterDB:scannedPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/charextractor"
+    local dir = DataStorage:getDataDir() .. "/kocharacters"
     util.makePath(dir)
     return dir .. "/" .. book_md5 .. "_scanned.json"
 end
@@ -300,7 +301,7 @@ end
 -- Pending cleanup flag
 -- ---------------------------------------------------------------------------
 function CharacterDB:pendingCleanupPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/charextractor"
+    local dir = DataStorage:getDataDir() .. "/kocharacters"
     util.makePath(dir)
     return dir .. "/" .. book_md5 .. "_pending_cleanup"
 end

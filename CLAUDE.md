@@ -32,7 +32,7 @@ The plugin has four modules:
 
 **`gemini_client.lua`** — Stateless API client. Builds prompts, makes HTTPS requests via `ssl.https`/`ltn12`, and parses JSON response envelopes. Model is `gemini-3.1-flash-lite-preview`. Free tier limits: 15 RPM, 500 RPD, 250K TPM. Exposes: `extractCharacters`, `reanalyzeCharacter`, `cleanCharacter`, `cleanCharacters`, `buildRelationshipMap`, `fetchModelInfo`.
 
-**`character_db.lua`** — Persistence layer. Reads/writes per-book JSON files at `<koreader_data>/charextractor/<book_id>.json`. Exports go to `<koreader_data>/kocharacters/`. Exposes merge, update, delete, enrich, cleanup, scanned-page tracking, and pending-cleanup flag operations.
+**`character_db.lua`** — Persistence layer. Reads/writes per-book JSON files at `<koreader_data>/kocharacters/<book_id>.json`. Exports go to `<koreader_data>/kocharacters/`. Exposes merge, update, delete, enrich, cleanup, scanned-page tracking, and pending-cleanup flag operations.
 
 **`_meta.lua`** — Plugin metadata (name, version) read by KOReader.
 

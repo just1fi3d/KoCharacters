@@ -570,6 +570,7 @@ function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_
                             if cc.personality          ~= nil then orig.personality          = cc.personality          end
                             if cc.role and cc.role ~= ""      then orig.role                 = cc.role                 end
                             if type(cc.relationships) == "table" then orig.relationships     = cc.relationships        end
+                            orig.needs_cleanup = nil
                             changed = true
                             break
                         end
@@ -1772,9 +1773,10 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
 
     -- Character items
     for _, c in ipairs(sorted) do
-        local name = c.name or "Unknown"
-        local role = (c.role and c.role ~= "" and c.role ~= "unknown")
-                     and (" [" .. c.role .. "]") or ""
+        local name    = c.name or "Unknown"
+        local role    = (c.role and c.role ~= "" and c.role ~= "unknown")
+                        and (" [" .. c.role .. "]") or ""
+        local cleanup = c.needs_cleanup and " ~" or ""
         local char = c
         if c._spoiler then
             local real_name = c._real_name
@@ -1800,7 +1802,7 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
             })
         else
         table.insert(items, {
-            text     = name .. role,
+            text     = name .. role .. cleanup,
             callback = function()
                 -- Mark as unlocked so navigating back won't hide this character again
                 if not char.unlocked then
