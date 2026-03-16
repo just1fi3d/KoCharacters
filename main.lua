@@ -291,10 +291,6 @@ function CharExtractor:addToMainMenu(menu_items)
                 callback = function() self:onExportCharacters() end,
             },
             {
-                text     = _("Clear character database"),
-                callback = function() self:onClearDatabase() end,
-            },
-            {
                 text     = _("Settings"),
                 callback = function() self:onOpenSettings() end,
             },
@@ -1895,6 +1891,10 @@ function CharExtractor:onOpenSettings()
                     "charextractor_relationship_map_prompt",
                     GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
                 ) end,
+            },
+            {
+                text     = "Clear character database",
+                callback = function() self:onClearDatabase() end,
             },
             {
                 text     = "Reset prompts to default",
