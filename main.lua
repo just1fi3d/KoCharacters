@@ -136,8 +136,9 @@ function CharExtractor:onCharViewUsage()        self:onViewUsage() end
 function CharExtractor:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
 function CharExtractor:init()
-    self.db = CharacterDB
+    self.db               = CharacterDB
     self._auto_extracting = false
+    self._pending_extract = nil
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     logger.info("CharExtractor: plugin initialised")
@@ -158,11 +159,29 @@ end
 
 function CharExtractor:_onPageChanged(pageno)
     if not G_reader_settings:readSetting("charextractor_auto_extract") then return end
+
+    -- Cancel any pending extraction scheduled for a previous page
+    if self._pending_extract then
+        UIManager:unschedule(self._pending_extract)
+        self._pending_extract = nil
+    end
+
     if self._auto_extracting then return end
+
     local book_id = self:getBookID()
     if not book_id then return end
     if self.db:isPageScanned(book_id, pageno) then return end
-    self:autoExtract(pageno)
+
+    -- Debounce: wait 2 seconds before extracting so rapid page flips don't
+    -- trigger a cascade of blocking API calls
+    self._pending_extract = function()
+        self._pending_extract = nil
+        if self._auto_extracting then return end
+        -- Only extract if the user is still on this page
+        if self:getCurrentPage() ~= pageno then return end
+        self:autoExtract(pageno)
+    end
+    UIManager:scheduleIn(2, self._pending_extract)
 end
 
 function CharExtractor:onPageUpdate(pageno)
