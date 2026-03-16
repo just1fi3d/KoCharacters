@@ -371,6 +371,8 @@ function KoCharacters:hideScanIndicator()
     if self._scan_indicator then
         UIManager:close(self._scan_indicator)
         self._scan_indicator = nil
+        UIManager:setDirty(nil, "fast")
+        UIManager:forceRePaint()
     end
 end
 
@@ -1364,10 +1366,15 @@ function KoCharacters:onScanChapter()
         return
     end
 
-    local page_count = end_page - start_page + 1
+    local page_count   = end_page - start_page + 1
+    local scanned      = self.db:loadScannedPages(book_id)
+    local unscanned    = 0
+    for p = start_page, end_page do if not scanned[p] then unscanned = unscanned + 1 end end
+    local skip_note    = unscanned < page_count
+        and "\n(" .. (page_count - unscanned) .. " already-scanned page(s) will be skipped)" or ""
     UIManager:show(ConfirmBox:new{
         text    = "Scan chapter from page " .. start_page .. " to " .. end_page
-                  .. " (" .. page_count .. " page(s))?\n\nGemini will be called once per page.",
+                  .. " (" .. unscanned .. "/" .. page_count .. " page(s) to scan)?" .. skip_note,
         ok_text = "Scan",
         ok_callback = function()
             self:checkAndWarnDuplicates(book_id, function()
@@ -1450,10 +1457,15 @@ function KoCharacters:onScanSpecificChapter()
             text = ch_ref.title .. "  (pp. " .. ch_ref.start_p .. "–" .. ch_ref.end_p .. ")" .. scan_label,
             callback = function()
                 local page_count = ch_ref.end_p - ch_ref.start_p + 1
+                local ch_scanned = self_ref.db:loadScannedPages(book_id)
+                local unscanned  = 0
+                for p = ch_ref.start_p, ch_ref.end_p do if not ch_scanned[p] then unscanned = unscanned + 1 end end
+                local skip_note  = unscanned < page_count
+                    and "\n(" .. (page_count - unscanned) .. " already-scanned page(s) will be skipped)" or ""
                 UIManager:show(ConfirmBox:new{
                     text    = 'Scan "' .. ch_ref.title .. '"\n'
                               .. "Pages " .. ch_ref.start_p .. "–" .. ch_ref.end_p
-                              .. " (" .. page_count .. " page(s))?",
+                              .. " (" .. unscanned .. "/" .. page_count .. " page(s) to scan)?" .. skip_note,
                     ok_text = "Scan",
                     ok_callback = function()
                         self_ref:checkAndWarnDuplicates(book_id, function()
@@ -1477,6 +1489,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
     local PAGES_PER_BATCH = 4
 
     local client         = GeminiClient:new(self:getApiKey())
+    local scanned        = self.db:loadScannedPages(book_id)
     local page_count     = end_page - start_page + 1
     local total_batches  = math.ceil(page_count / PAGES_PER_BATCH)
     local total_found    = 0
@@ -1564,16 +1577,19 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
         UIManager:show(progress_msg)
         UIManager:forceRePaint()
 
-        -- Collect and concatenate text from all pages in this batch
+        -- Collect text from unscanned pages in this batch
         local texts = {}
         for p = batch_start, batch_end do
-            local page_text = self_ref:getCurrentPageText(p)
-            if page_text and #page_text >= 20 then
-                table.insert(texts, page_text)
+            if not scanned[p] then
+                local page_text = self_ref:getCurrentPageText(p)
+                if page_text and #page_text >= 20 then
+                    table.insert(texts, page_text)
+                end
+                scanned[p] = true  -- update local set so re-used batches stay consistent
             end
         end
 
-        -- Mark all pages in batch as scanned regardless of whether we got text
+        -- Mark all pages in batch as scanned
         self_ref.db:markPagesScanned(book_id, batch_start, batch_end)
 
         if #texts == 0 then

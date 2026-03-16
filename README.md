@@ -70,6 +70,12 @@ When enabled, the plugin automatically scans each new page as you turn to it, af
 
 Scans every page in a chapter in batches of 4 pages per Gemini call, sleeping 3 seconds between batches to stay within the free-tier rate limit (15 RPM). The "Scan specific chapter" option shows all TOC chapters with their page ranges and a scan status indicator (`[✓ done]`, `[~ N/M pages]`, or unseen).
 
+### Cleanup needed
+
+The **KoCharacters** menu title shows **"— cleanup needed"** when auto-extract has enriched one or more existing characters (merged new details from a near-duplicate) but skipped the Gemini deduplication pass to avoid blocking. Over multiple page scans, enriched fields can accumulate redundant phrases (e.g. "brave; brave" or "tall with dark hair; tall, dark hair").
+
+Run **"Cleanup all characters"** to send all affected profiles to Gemini for a single deduplication pass. The flag also clears automatically at the end of a chapter scan.
+
 ### Spoiler protection
 
 Characters have an `unlocked` field. When spoiler protection is enabled in Settings, characters first seen beyond your current page are shown as `[SPOILER]` in the browser. Tapping a spoiler entry unlocks it.
