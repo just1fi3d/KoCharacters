@@ -349,8 +349,13 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
         if ok and not err and cleaned and type(cleaned) == "table" then
             local all_chars = self_ref.db:load(book_id)
             local changed   = false
-            for _, cc in ipairs(cleaned) do
+            for i, cc in ipairs(cleaned) do
                 if cc.name then
+                    local apply_msg = InfoMessage:new{
+                        text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                    }
+                    UIManager:show(apply_msg)
+                    UIManager:forceRePaint()
                     for _, orig in ipairs(all_chars) do
                         if orig.name == cc.name then
                             if cc.physical_description ~= nil then orig.physical_description = cc.physical_description end
@@ -361,6 +366,7 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
                             break
                         end
                     end
+                    UIManager:close(apply_msg)
                 end
             end
             if changed then self_ref.db:save(book_id, all_chars) end
@@ -1199,8 +1205,13 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             if cok and not cerr and cleaned and type(cleaned) == "table" then
                 local all_chars = self_ref.db:load(book_id)
                 local changed   = false
-                for _, cc in ipairs(cleaned) do
+                for i, cc in ipairs(cleaned) do
                     if cc.name then
+                        local apply_msg = InfoMessage:new{
+                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                        }
+                        UIManager:show(apply_msg)
+                        UIManager:forceRePaint()
                         for _, orig in ipairs(all_chars) do
                             if orig.name == cc.name then
                                 if cc.physical_description ~= nil       then orig.physical_description = cc.physical_description end
@@ -1210,6 +1221,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
                                 changed = true; break
                             end
                         end
+                        UIManager:close(apply_msg)
                     end
                 end
                 if changed then self_ref.db:save(book_id, all_chars) end
