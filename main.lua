@@ -247,7 +247,7 @@ function CharExtractor:autoExtract(page_num)
         if #resolved > 0 then self.db:merge(book_id, resolved, cur_page) end
         self._auto_extracting = false
         self:showMsg("Auto-extracted " .. #characters .. " character(s).", 3)
-    end, cur_page)
+    end, cur_page, true)
 end
 
 function CharExtractor:addToMainMenu(menu_items)
@@ -255,8 +255,11 @@ function CharExtractor:addToMainMenu(menu_items)
         text_func = function()
             local book_id = self:getBookID()
             local n = book_id and #self.db:load(book_id) or 0
-            if n == 0 then return _("Character Extractor") end
-            return _("Character Extractor") .. " (" .. n .. ")"
+            local base = n == 0 and _("Character Extractor") or (_("Character Extractor") .. " (" .. n .. ")")
+            if book_id and self.db:hasPendingCleanup(book_id) then
+                base = base .. " — cleanup needed"
+            end
+            return base
         end,
         sub_item_table = {
             {
@@ -278,6 +281,10 @@ function CharExtractor:addToMainMenu(menu_items)
             {
                 text     = _("View relationship map"),
                 callback = function() self:onViewRelationshipMap() end,
+            },
+            {
+                text     = _("Cleanup all characters"),
+                callback = function() self:onCleanupAllCharacters() end,
             },
             {
                 text     = _("Export character list"),
@@ -323,7 +330,7 @@ function CharExtractor:checkAndWarnDuplicates(book_id, on_continue)
     })
 end
 
-function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page_num)
+function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
     local existing  = self.db:load(book_id)
     local conflicts = findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
@@ -346,6 +353,7 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
             end
         end
         if #enriched_names > 0 then
+            if skip_cleanup then self.db:markPendingCleanup(book_id) end
             self:showMsg("Enriched: " .. table.concat(enriched_names, ", "), 3)
         end
         on_done(resolved)
@@ -366,6 +374,12 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
         end
 
         if #enriched_chars == 0 then
+            on_done(resolved)
+            return
+        end
+
+        if skip_cleanup then
+            self_ref.db:markPendingCleanup(book_id)
             on_done(resolved)
             return
         end
@@ -1274,6 +1288,7 @@ function CharExtractor:doChapterScan(book_id, start_page, end_page)
             end
         end
 
+        self_ref.db:clearPendingCleanup(book_id)
         self_ref:showMsg(
             "Chapter scan complete.\n"
             .. "Batches: " .. total_batches .. " (".. page_count .. " pages, " .. PAGES_PER_BATCH .. " per batch)\n"
@@ -1692,6 +1707,75 @@ function CharExtractor:onExportCharacters()
     self:showMsg("Exported to:\n" .. export_path, 5)
 end
 
+function CharExtractor:onCleanupAllCharacters()
+    local book_id = self:getBookID()
+    if not book_id then return end
+    local characters = self.db:load(book_id)
+    if #characters == 0 then
+        self:showMsg("No characters to clean up.", 3)
+        return
+    end
+
+    local api_key = self:getApiKey()
+    if api_key == "" then
+        self:showMsg("No Gemini API key set.\nGo to Character Extractor > Settings.")
+        return
+    end
+
+    local working_msg = InfoMessage:new{
+        text = "Cleaning up all " .. #characters .. " character(s)..."
+    }
+    UIManager:show(working_msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local cleaned, err, usage
+    local ok, call_err = pcall(function()
+        cleaned, err, usage = client:cleanCharacters(characters)
+    end)
+    UIManager:close(working_msg)
+    if ok and not err then self:recordUsage(usage) end
+
+    if not ok then
+        self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+        return
+    end
+    if err then
+        self:showMsg("Gemini error:\n" .. tostring(err), 8)
+        return
+    end
+    if not cleaned or type(cleaned) ~= "table" then
+        self:showMsg("Cleanup returned no data.", 4)
+        return
+    end
+
+    local all_chars = self.db:load(book_id)
+    local changed   = false
+    for i, cc in ipairs(cleaned) do
+        if cc.name then
+            local apply_msg = InfoMessage:new{
+                text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+            }
+            UIManager:show(apply_msg)
+            UIManager:forceRePaint()
+            for _, orig in ipairs(all_chars) do
+                if orig.name == cc.name then
+                    if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
+                    if cc.personality          ~= nil    then orig.personality          = cc.personality          end
+                    if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
+                    if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
+                    changed = true; break
+                end
+            end
+            UIManager:close(apply_msg)
+        end
+    end
+
+    if changed then self.db:save(book_id, all_chars) end
+    self.db:clearPendingCleanup(book_id)
+    self:showMsg("Cleanup complete. " .. #cleaned .. " character(s) cleaned.", 4)
+end
+
 function CharExtractor:onClearDatabase()
     local book_id = self:getBookID()
     if not book_id then return end
@@ -1701,6 +1785,7 @@ function CharExtractor:onClearDatabase()
         ok_callback = function()
             self.db:clear(book_id)
             self.db:clearScannedPages(book_id)
+            self.db:clearPendingCleanup(book_id)
             self:showMsg("Character database cleared.", 3)
         end,
     })

@@ -296,4 +296,28 @@ function CharacterDB:clearScannedPages(book_md5)
     os.remove(self:scannedPath(book_md5))
 end
 
+-- ---------------------------------------------------------------------------
+-- Pending cleanup flag
+-- ---------------------------------------------------------------------------
+function CharacterDB:pendingCleanupPath(book_md5)
+    local dir = DataStorage:getDataDir() .. "/charextractor"
+    util.makePath(dir)
+    return dir .. "/" .. book_md5 .. "_pending_cleanup"
+end
+
+function CharacterDB:markPendingCleanup(book_md5)
+    local f = io.open(self:pendingCleanupPath(book_md5), "w")
+    if f then f:close() end
+end
+
+function CharacterDB:hasPendingCleanup(book_md5)
+    local f = io.open(self:pendingCleanupPath(book_md5), "r")
+    if f then f:close(); return true end
+    return false
+end
+
+function CharacterDB:clearPendingCleanup(book_md5)
+    os.remove(self:pendingCleanupPath(book_md5))
+end
+
 return CharacterDB
