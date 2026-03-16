@@ -60,6 +60,42 @@ local function findIncomingConflicts(existing, incoming)
     return conflicts
 end
 
+-- Collapse near-duplicate names within a single incoming batch before DB insertion.
+-- Merges the second into the first (fills in missing fields), returns deduped list.
+local function deduplicateIncoming(chars)
+    if #chars < 2 then return chars end
+    local removed = {}
+    for i = 1, #chars do
+        if not removed[i] then
+            local a = chars[i]
+            local a_low = (a.name or ""):lower()
+            for j = i + 1, #chars do
+                if not removed[j] then
+                    local b = chars[j]
+                    local b_low = (b.name or ""):lower()
+                    if #a_low >= 4 and #b_low >= 4 then
+                        local dist      = levenshtein(a_low, b_low)
+                        local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
+                        local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
+                        if dist <= threshold or substring then
+                            -- Merge b's non-empty fields into a
+                            if (a.role == nil or a.role == "") and b.role and b.role ~= "" then a.role = b.role end
+                            if (a.physical_description == nil or a.physical_description == "") and b.physical_description and b.physical_description ~= "" then a.physical_description = b.physical_description end
+                            if (a.personality == nil or a.personality == "") and b.personality and b.personality ~= "" then a.personality = b.personality end
+                            removed[j] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local result = {}
+    for i, c in ipairs(chars) do
+        if not removed[i] then table.insert(result, c) end
+    end
+    return result
+end
+
 local function findDuplicatePairs(characters)
     local pairs_found = {}
     for i = 1, #characters do
@@ -311,22 +347,58 @@ end
 function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
     local characters = self.db:load(book_id)
     if #characters < 2 then on_continue(); return end
-    local pairs = findDuplicatePairs(characters)
-    if #pairs == 0 then on_continue(); return end
+    local dup_pairs = findDuplicatePairs(characters)
+    if #dup_pairs == 0 then on_continue(); return end
 
-    local lines = { "Possible duplicate characters detected:" }
-    for _, p in ipairs(pairs) do
-        table.insert(lines, '  \xE2\x80\xA2 "' .. p[1] .. '" and "' .. p[2] .. '"')
+    local self_ref = self
+
+    local function processPairs(remaining)
+        if #remaining == 0 then on_continue(); return end
+
+        local p    = remaining[1]
+        local rest = { table.unpack(remaining, 2) }
+        local a, b = p[1], p[2]
+
+        local viewer
+        viewer = TextViewer:new{
+            title  = "Possible duplicate " .. (#dup_pairs - #remaining + 1) .. "/" .. #dup_pairs,
+            text   = '"' .. a .. '" and "' .. b .. '" look like the same character.\n\nMerge them?',
+            width  = math.floor(Screen:getWidth() * 0.9),
+            height = math.floor(Screen:getHeight() * 0.6),
+            buttons_table = {{
+                {
+                    text     = 'Merge into "' .. b .. '"',
+                    callback = function()
+                        UIManager:close(viewer)
+                        self_ref.db:mergeCharacters(book_id, a, b)
+                        processPairs(rest)
+                    end,
+                },
+                {
+                    text     = 'Merge into "' .. a .. '"',
+                    callback = function()
+                        UIManager:close(viewer)
+                        self_ref.db:mergeCharacters(book_id, b, a)
+                        processPairs(rest)
+                    end,
+                },
+                {
+                    text     = "Skip",
+                    callback = function()
+                        UIManager:close(viewer)
+                        processPairs(rest)
+                    end,
+                },
+            }},
+        }
+        UIManager:show(viewer)
     end
-    table.insert(lines, "\nContinue extraction anyway?")
-    UIManager:show(ConfirmBox:new{
-        text        = table.concat(lines, "\n"),
-        ok_text     = "Continue",
-        ok_callback = on_continue,
-    })
+
+    processPairs(dup_pairs)
 end
 
 function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
+    new_chars = deduplicateIncoming(new_chars)
     local existing  = self.db:load(book_id)
     local conflicts = findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
@@ -1243,8 +1315,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
             local enriched_name_strs = {}
             for _, ec in ipairs(enriched_list) do table.insert(enriched_name_strs, ec.name or "?") end
             local cleanup_msg = InfoMessage:new{
-                text = "Cleaning up " .. #enriched_list .. " enriched character(s):\n"
-                       .. table.concat(enriched_name_strs, ", ")
+                text = "Cleaning up " .. #enriched_list .. " enriched character(s)..."
             }
             UIManager:show(cleanup_msg)
             UIManager:forceRePaint()
@@ -1262,7 +1333,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
                 for i, cc in ipairs(cleaned) do
                     if cc.name then
                         local apply_msg = InfoMessage:new{
-                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                            text = "Applying cleanup " .. i .. "/" .. #cleaned .. "..."
                         }
                         UIManager:show(apply_msg)
                         UIManager:forceRePaint()
@@ -1421,16 +1492,18 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         end
     end
 
-    -- Spoiler protection: hide characters whose first_seen_page is ahead of current page
+    -- Spoiler protection: mask characters whose first_seen_page is ahead of current page
     if G_reader_settings:readSetting("kocharacters_spoiler_protection") then
         local cur_page = self:getCurrentPage() or 0
-        local visible  = {}
+        local masked = {}
         for _, c in ipairs(filtered) do
-            if not c.first_seen_page or c.first_seen_page <= cur_page then
-                table.insert(visible, c)
+            if not c.unlocked and c.first_seen_page and c.first_seen_page > cur_page then
+                table.insert(masked, { name = "Unknown character (page " .. c.first_seen_page .. ")", _spoiler = true, _real_name = c.name })
+            else
+                table.insert(masked, c)
             end
         end
-        filtered = visible
+        filtered = masked
     end
 
     -- Sort
@@ -1507,9 +1580,37 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         local role = (c.role and c.role ~= "" and c.role ~= "unknown")
                      and (" [" .. c.role .. "]") or ""
         local char = c
+        if c._spoiler then
+            local real_name = c._real_name
+            table.insert(items, {
+                text = name,
+                callback = function()
+                    UIManager:show(ConfirmBox:new{
+                        text        = "Unlock this character and reveal their details?",
+                        ok_text     = "Unlock",
+                        ok_callback = function()
+                            local chars = self_ref.db:load(book_id)
+                            for _, ch in ipairs(chars) do
+                                if ch.name == real_name then
+                                    ch.unlocked = true
+                                    self_ref.db:updateCharacter(book_id, real_name, ch)
+                                    break
+                                end
+                            end
+                            self_ref:showCharacterBrowser(book_id, sort_mode, query)
+                        end,
+                    })
+                end,
+            })
+        else
         table.insert(items, {
             text     = name .. role,
             callback = function()
+                -- Mark as unlocked so navigating back won't hide this character again
+                if not char.unlocked then
+                    char.unlocked = true
+                    self_ref.db:updateCharacter(book_id, char.name, char)
+                end
                 local viewer
                 viewer = TextViewer:new{
                     title  = name,
@@ -1594,6 +1695,7 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                 UIManager:show(viewer)
             end,
         })
+        end  -- else (not spoiler)
     end
 
     local count_str = query ~= "" and (#filtered .. "/" .. #all_chars) or tostring(#all_chars)
