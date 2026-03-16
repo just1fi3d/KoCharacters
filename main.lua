@@ -172,8 +172,9 @@ function CharExtractor:_onPageChanged(pageno)
     if not book_id then return end
     if self.db:isPageScanned(book_id, pageno) then return end
 
-    -- Debounce: wait 2 seconds before extracting so rapid page flips don't
+    -- Debounce: wait N seconds before extracting so rapid page flips don't
     -- trigger a cascade of blocking API calls
+    local delay = G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10
     self._pending_extract = function()
         self._pending_extract = nil
         if self._auto_extracting then return end
@@ -181,7 +182,7 @@ function CharExtractor:_onPageChanged(pageno)
         if self:getCurrentPage() ~= pageno then return end
         self:autoExtract(pageno)
     end
-    UIManager:scheduleIn(2, self._pending_extract)
+    UIManager:scheduleIn(delay, self._pending_extract)
 end
 
 function CharExtractor:onPageUpdate(pageno)
@@ -326,6 +327,30 @@ function CharExtractor:handleIncomingConflicts(book_id, new_chars, on_done, page
     local existing  = self.db:load(book_id)
     local conflicts = findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
+
+    -- Auto-accept mode: enrich all conflicts silently, show a toast summary
+    if G_reader_settings:readSetting("charextractor_auto_enrich") then
+        local enriched_names = {}
+        local conflict_set   = {}
+        for _, conflict in ipairs(conflicts) do
+            local new_c = conflict.new_char
+            local ex_c  = conflict.existing_char
+            self.db:enrichCharacter(book_id, ex_c.name, new_c, page_num)
+            table.insert(enriched_names, ex_c.name)
+            conflict_set[(new_c.name or ""):lower()] = true
+        end
+        local resolved = {}
+        for _, c in ipairs(new_chars) do
+            if not conflict_set[(c.name or ""):lower()] then
+                table.insert(resolved, c)
+            end
+        end
+        if #enriched_names > 0 then
+            self:showMsg("Enriched: " .. table.concat(enriched_names, ", "), 3)
+        end
+        on_done(resolved)
+        return
+    end
 
     local self_ref  = self
     local to_enrich = {}   -- new_char_name_lower -> existing_char_name
@@ -1695,12 +1720,50 @@ function CharExtractor:onOpenSettings()
                 callback = function() self:onSetApiKey() end,
             },
             {
-                text = "Auto-extract on chapter change: "
+                text = "Auto-extract on page turn: "
                     .. (G_reader_settings:readSetting("charextractor_auto_extract") and "ON" or "OFF"),
                 callback = function()
                     local on = G_reader_settings:readSetting("charextractor_auto_extract")
                     G_reader_settings:saveSetting("charextractor_auto_extract", not on)
                     self:showMsg("Auto-extract: " .. (not on and "ON" or "OFF"), 2)
+                end,
+            },
+            {
+                text = "Auto-extract delay: "
+                    .. (G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10) .. "s",
+                callback = function()
+                    local dialog
+                    dialog = InputDialog:new{
+                        title      = "Auto-extract delay (seconds)",
+                        input      = tostring(G_reader_settings:readSetting("charextractor_auto_extract_delay") or 10),
+                        input_type = "number",
+                        buttons    = {{
+                            { text = "Cancel", callback = function() UIManager:close(dialog) end },
+                            {
+                                text             = "Save",
+                                is_enter_default = true,
+                                callback         = function()
+                                    local val = tonumber(dialog:getInputText())
+                                    UIManager:close(dialog)
+                                    if val and val > 0 then
+                                        G_reader_settings:saveSetting("charextractor_auto_extract_delay", val)
+                                        self:showMsg("Auto-extract delay set to " .. val .. "s", 2)
+                                    end
+                                end,
+                            },
+                        }},
+                    }
+                    UIManager:show(dialog)
+                    dialog:onShowKeyboard()
+                end,
+            },
+            {
+                text = "Auto-accept enrichments: "
+                    .. (G_reader_settings:readSetting("charextractor_auto_enrich") and "ON" or "OFF"),
+                callback = function()
+                    local on = G_reader_settings:readSetting("charextractor_auto_enrich")
+                    G_reader_settings:saveSetting("charextractor_auto_enrich", not on)
+                    self:showMsg("Auto-accept enrichments: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
             {
