@@ -58,6 +58,11 @@ Every time a known character appears on a scanned page, their full current profi
 
 Gemini is instructed to write **synthesised descriptions, not event logs** — personality fields read as character traits ("reckless and fiercely loyal") rather than lists of actions.
 
+There are two enrichment paths depending on how Gemini names the character:
+
+- **Exact name match** — Gemini returns "John" and "John" already exists. The existing record is silently replaced with the updated version on every page the character appears on. This is the normal path and happens automatically with no notification.
+- **Near-duplicate name** — Gemini returns "Jon" or "Mr. Smith" for an existing "John" or "Smith" (Levenshtein distance ≤ 2, or one name is a substring of the other). The plugin detects the conflict and calls `enrichCharacter` to merge the new details into the existing record, then sets the **"cleanup needed"** flag since the merged fields may contain redundant text.
+
 ### Duplicate and conflict detection
 
 When Gemini returns characters that look like existing ones (Levenshtein distance ≤ 2, or one name is a substring of another), the plugin detects the conflict and offers to enrich the existing character rather than create a duplicate. Within a single Gemini response, near-duplicates are collapsed before insertion.
