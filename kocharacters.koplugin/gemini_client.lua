@@ -9,9 +9,10 @@ local ltn12 = require("ltn12")
 local GeminiClient = {}
 GeminiClient.__index = GeminiClient
 
-local MODEL    = "gemini-3.1-flash-lite-preview"
-local API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/" .. MODEL .. ":generateContent"
+local MODEL        = "gemini-3.1-flash-lite-preview"
+local API_BASE     = "https://generativelanguage.googleapis.com/v1beta/models/" .. MODEL .. ":generateContent"
 local API_MODELS_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+local IMAGEN_BASE  = "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict"
 
 -- Safe placeholder substitution (handles % in values correctly)
 local function sub(s, placeholder, value)
@@ -520,6 +521,68 @@ function GeminiClient:fetchModelInfo()
         return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
     end
     return parsed, nil
+end
+
+-- Generate a portrait for a character using Imagen
+-- Returns base64-encoded PNG data string, or nil + error
+function GeminiClient:generatePortrait(char)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+
+    -- Build a compact prompt, keeping well under the 480-token limit
+    local name  = char.name or "Unknown"
+    local role  = (char.role and char.role ~= "" and char.role ~= "unknown") and char.role or nil
+    local phys  = char.physical_description or ""
+    local pers  = char.personality or ""
+
+    -- Truncate long fields to stay under token budget
+    if #phys > 300 then phys = phys:sub(1, 297) .. "..." end
+    if #pers > 200 then pers = pers:sub(1, 197) .. "..." end
+
+    local parts = { "Portrait of " .. name .. ", a fictional character from a novel." }
+    if role then table.insert(parts, name .. " is a " .. role .. ".") end
+    if phys ~= "" then table.insert(parts, phys) end
+    if pers ~= "" then table.insert(parts, "Personality: " .. pers) end
+    table.insert(parts, "Painted portrait, detailed, realistic, neutral background.")
+
+    local prompt = table.concat(parts, " ")
+
+    local request_body = json.encode({
+        instances  = { { prompt = prompt } },
+        parameters = { sampleCount = 1 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url    = IMAGEN_BASE .. "?key=" .. self.api_key,
+        method = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse Imagen response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "Imagen API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+
+    local b64 = parsed.predictions
+        and parsed.predictions[1]
+        and parsed.predictions[1].bytesBase64Encoded
+    if not b64 or b64 == "" then
+        return nil, "Imagen returned no image data"
+    end
+
+    return b64, nil
 end
 
 return GeminiClient

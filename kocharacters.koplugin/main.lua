@@ -184,11 +184,6 @@ function KoCharacters:init()
         self.ui.highlight:addToHighlightDialog("kocharacters_lookup", function(highlight_instance)
             return {
                 text = "Find character",
-                enabled_func = function()
-                    local book_id = self_ref:getBookID()
-                    if not book_id then return false end
-                    return #self_ref.db:load(book_id) > 0
-                end,
                 callback = function()
                     local selected = highlight_instance.selected_text
                     local word = selected and (selected.text or selected.word or "") or ""
@@ -1101,32 +1096,58 @@ end
 
 function KoCharacters:formatCharacter(c)
     local lines = {}
-    table.insert(lines, "========================")
-    table.insert(lines, "Name: " .. (c.name or "Unknown"))
+
+    table.insert(lines, "NAME")
+    table.insert(lines, c.name or "Unknown")
+
     if c.aliases and #c.aliases > 0 then
-        table.insert(lines, "Aliases: " .. table.concat(c.aliases, ", "))
+        table.insert(lines, "")
+        table.insert(lines, "ALIASES")
+        table.insert(lines, table.concat(c.aliases, ", "))
     end
+
     if c.role and c.role ~= "" then
-        table.insert(lines, "Role: " .. c.role)
+        table.insert(lines, "")
+        table.insert(lines, "ROLE")
+        table.insert(lines, c.role)
     end
+
     if c.physical_description and c.physical_description ~= "" then
-        table.insert(lines, "Appearance: " .. c.physical_description)
+        table.insert(lines, "")
+        table.insert(lines, "APPEARANCE")
+        table.insert(lines, c.physical_description)
     end
+
     if c.personality and c.personality ~= "" then
-        table.insert(lines, "Personality: " .. c.personality)
+        table.insert(lines, "")
+        table.insert(lines, "PERSONALITY")
+        table.insert(lines, c.personality)
     end
+
     if c.relationships and #c.relationships > 0 then
-        table.insert(lines, "Relationships: " .. table.concat(c.relationships, "; "))
+        table.insert(lines, "")
+        table.insert(lines, "RELATIONSHIPS")
+        table.insert(lines, table.concat(c.relationships, "\n"))
     end
+
     if c.first_appearance_quote and c.first_appearance_quote ~= "" then
-        table.insert(lines, 'First seen: "' .. c.first_appearance_quote .. '"')
+        table.insert(lines, "")
+        table.insert(lines, "FIRST SEEN")
+        table.insert(lines, '"' .. c.first_appearance_quote .. '"')
     end
+
     if c.user_notes and c.user_notes ~= "" then
-        table.insert(lines, "Notes: " .. c.user_notes)
+        table.insert(lines, "")
+        table.insert(lines, "NOTES")
+        table.insert(lines, c.user_notes)
     end
+
     if c.source_page then
-        table.insert(lines, "Last updated: page " .. c.source_page)
+        table.insert(lines, "")
+        table.insert(lines, "LAST UPDATED")
+        table.insert(lines, "Page " .. c.source_page)
     end
+
     return table.concat(lines, "\n")
 end
 
@@ -1843,6 +1864,15 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                     buttons_table = {
                         {
                             {
+                                text     = "Generate Portrait",
+                                callback = function()
+                                    UIManager:close(viewer)
+                                    self_ref:onGeneratePortrait(book_id, char)
+                                end,
+                            },
+                        },
+                        {
+                            {
                                 text     = "Re-analyze",
                                 callback = function()
                                     UIManager:close(viewer)
@@ -1930,6 +1960,59 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
     })
 end
 
+-- Return a safe filename component for a character name
+local function portraitSafeName(name)
+    return (name:gsub("[^%w%-]", "_"):lower())
+end
+
+-- Return the full filesystem path to a character's portrait PNG
+function KoCharacters:portraitPath(book_id, char_name)
+    local DataStorage = require("datastorage")
+    local dir = DataStorage:getDataDir() .. "/kocharacters/portraits/" .. book_id
+    local util = require("util")
+    util.makePath(dir)
+    return dir .. "/" .. portraitSafeName(char_name) .. ".png"
+end
+
+-- Generate and save a portrait for the given character
+function KoCharacters:onGeneratePortrait(book_id, char)
+    local msg = InfoMessage:new{ text = "Generating portrait for " .. char.name .. "…" }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+
+    local b64, err = self.gemini:generatePortrait(char)
+    UIManager:close(msg)
+
+    if not b64 then
+        self:showMsg("Portrait failed:\n" .. (err or "unknown error"))
+        return
+    end
+
+    -- Decode base64 PNG via BusyBox base64 utility
+    local DataStorage = require("datastorage")
+    local tmp_path  = DataStorage:getDataDir() .. "/kocharacters/portraits/.tmp_b64"
+    local out_path  = self:portraitPath(book_id, char.name)
+
+    local ftmp = io.open(tmp_path, "w")
+    if not ftmp then
+        self:showMsg("Could not write temp file for portrait.")
+        return
+    end
+    ftmp:write(b64)
+    ftmp:close()
+
+    local cmd = 'base64 -d "' .. tmp_path .. '" > "' .. out_path .. '"'
+    local ret = os.execute(cmd)
+    os.remove(tmp_path)
+
+    if ret ~= 0 then
+        self:showMsg("Failed to decode portrait image.")
+        return
+    end
+
+    self:showMsg("Portrait saved for " .. char.name .. ".", 3)
+end
+
 function KoCharacters:onExportCharacters()
     local book_id = self:getBookID()
     if not book_id then
@@ -1970,6 +2053,7 @@ function KoCharacters:onExportCharacters()
     p('.field p{margin:2px 0 10px;line-height:1.5;}')
     p('.aliases,.relationships{color:#555;}')
     p('.quote{border-left:3px solid #c9a84c;padding-left:12px;color:#666;font-style:italic;}')
+    p('.portrait{float:right;margin:0 0 12px 16px;border:1px solid #ddd;border-radius:4px;max-width:180px;max-height:240px;}')
     p('</style></head><body>')
     p('<h1>' .. esc(title) .. '</h1>')
     p('<p style="color:#888;font-size:.85em;">' .. #characters .. ' character(s)</p>')
@@ -1986,6 +2070,14 @@ function KoCharacters:onExportCharacters()
     for _, c in ipairs(characters) do
         local anchor = esc(c.name or "Unknown"):gsub("%s+", "-"):lower()
         p('<div class="character" id="' .. anchor .. '">')
+        -- Embed portrait if one has been generated
+        local portrait_rel = "portraits/" .. book_id .. "/" .. portraitSafeName(c.name or "Unknown") .. ".png"
+        local portrait_abs = DataStorage:getDataDir() .. "/kocharacters/" .. portrait_rel
+        local pf = io.open(portrait_abs, "r")
+        if pf then
+            pf:close()
+            p('<img class="portrait" src="' .. portrait_rel .. '" alt="Portrait of ' .. esc(c.name or "Unknown") .. '">')
+        end
         p('<div class="char-name">' .. esc(c.name or "Unknown") .. '</div>')
         if c.role and c.role ~= "" then
             p('<div class="char-role">' .. esc(c.role) .. '</div>')
@@ -2013,6 +2105,7 @@ function KoCharacters:onExportCharacters()
         if c.source_page then
             p('<div style="margin-top:10px;font-size:.8em;color:#bbb;text-align:right;">Last updated: page ' .. esc(tostring(c.source_page)) .. '</div>')
         end
+        p('<div style="clear:both;"></div>')
         p('</div>')
     end
 
