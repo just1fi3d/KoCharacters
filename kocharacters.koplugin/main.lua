@@ -2748,6 +2748,21 @@ function KoCharacters:onOpenSettings()
                     })
                 end,
             },
+            {
+                text     = "About",
+                callback = function()
+                    UIManager:show(TextViewer:new{
+                        title = "About KoCharacters",
+                        text  = "KoCharacters\n\n"
+                             .. "Automatically extract, track, and enrich character profiles from your books using Google Gemini AI. "
+                             .. "Generate portraits with Google Imagen. Runs on KOReader on Kindle and other supported devices.\n\n"
+                             .. "\xC2\xA9 2026\nNefelodamon\n\n"
+                             .. "https://github.com/nefelodamon/KoCharacters",
+                        width  = math.floor(Screen:getWidth() * 0.9),
+                        height = math.floor(Screen:getHeight() * 0.6),
+                    })
+                end,
+            },
         },
         width       = Screen:getWidth(),
         show_parent = self.ui,
