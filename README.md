@@ -1,16 +1,22 @@
 # KoCharacters — KOReader Plugin
 
-Automatically extract, track, and enrich character profiles from your books using the **Google Gemini AI API** (free tier). Runs on KOReader on Kindle and other supported devices.
+Automatically extract, track, and enrich character profiles from your books using the **Google Gemini AI API** (free tier). Generate AI portraits using **Google Imagen**. Runs on KOReader on Kindle and other supported devices.
 
 ---
 
-## How to get a free Gemini API key
+## How to get API keys
+
+### Gemini (character extraction — free)
 
 1. Go to **aistudio.google.com** and sign in with your Google account
 2. Click **"Get API key"** in the left sidebar
 3. Click **"Create API key"** — choose "Create API key in new project"
 4. Copy the key (it starts with `AIza…`)
-5. That's it — no credit card required, free tier gives 500 requests/day and 1M tokens/day
+5. No credit card required — free tier gives 500 requests/day and 1M tokens/day
+
+### Imagen (portrait generation — paid)
+
+Portrait generation uses the Google Imagen API, which requires a Google Cloud project with billing enabled. The same key format (`AIza…`) is used but must be created in Google AI Studio with Imagen access enabled. Imagen charges per image generated.
 
 ---
 
@@ -18,8 +24,9 @@ Automatically extract, track, and enrich character profiles from your books usin
 
 1. Copy the `kocharacters.koplugin/` folder into your KOReader `plugins/` directory
 2. Restart KOReader
-3. Open any book, tap the menu → **KoCharacters** → **Settings**
-4. Paste your Gemini API key and save
+3. Open any book, tap the menu → **KoCharacters** → **Settings...** → **AI Settings...**
+4. Paste your Gemini Character Extraction key
+5. Optionally paste your Gemini Image Generation key to enable portrait generation
 
 ---
 
@@ -31,13 +38,25 @@ All actions live under the reader menu → **KoCharacters**:
 |---|---|
 | **Extract characters from this page** | Sends the current page text to Gemini and saves any characters found or updated |
 | **Scan current chapter** | Scans every page in the current chapter, 4 pages per Gemini call |
-| **Scan specific chapter…** | Shows a list of all chapters (with scan status) so you can pick one to scan |
-| **View saved characters** | Browse the full character list; tap a name to see their profile, edit fields, or unlock spoilers |
-| **Re-analyze character…** | Pick a character and re-run Gemini against the current page to enrich their profile |
+| **Scan specific chapter** | Shows a list of all chapters (with scan status) so you can pick one to scan |
+| **View saved characters** | Browse the full character list; tap a name to see their profile and take actions |
+| **Re-analyze character** | Pick a character and re-run Gemini against the current page to enrich their profile |
 | **View relationship map** | Gemini reads all saved profiles and produces a text relationship map |
 | **Cleanup all characters** | Batch-deduplicates redundant text in all character profiles via Gemini |
-| **Export character list** | Writes a plain `.txt` file to `<koreader_data>/kocharacters/` |
-| **Settings** | Configure API key, auto-extract, scan indicator, spoiler protection, and prompts |
+| **Generate portraits** | Select one or more characters to generate AI portraits via Imagen |
+| **Export...** | Export character list (HTML) or Export as ZIP (HTML + portraits) |
+| **Settings...** | Configure keys, auto-extract, indicators, spoiler protection, and prompts |
+
+### Character detail screen
+
+Tapping a character in the list opens their profile with two rows of actions:
+
+| Row | Buttons |
+|---|---|
+| **Row 1** | Generate Portrait — Merge into... — Delete Character |
+| **Row 2** | Re-analyze — Clean up — Edit |
+
+The same actions are available when using **Find character** by selecting text in the book.
 
 ---
 
@@ -48,9 +67,18 @@ All actions live under the reader menu → **KoCharacters**:
 1. The plugin reads the current page text by parsing the epub directly via `unzip` — this is the most reliable method on the supported KOReader build
 2. It loads all already-known characters for this book from the local JSON database
 3. Known characters whose name or alias appears in the page text are passed to Gemini as **full profiles to update**; the rest are passed as a **skip list**
-4. Gemini returns a JSON array of new and updated character profiles, inferring personality traits and appearance from the text
+4. Gemini returns a JSON object containing new/updated character profiles and an updated **book context** summary
 5. New characters are inserted into the database; existing characters are fully updated in-place with enriched information
 6. Scanned pages are tracked in a sidecar file so they are never re-processed
+
+### Book context (auto-built)
+
+Each extraction call asks Gemini to maintain a 2–3 sentence summary of the book's genre, setting, country/region, and historical era. This context is:
+
+- Extracted from the **same Gemini call** as character data — no extra API calls
+- Passed back to Gemini on every subsequent call so it builds cumulatively as you read
+- Used automatically in portrait generation prompts to ensure historically accurate clothing, style, and setting
+- Viewable and clearable from **Settings... → AI Settings... → View book context**
 
 ### Incremental enrichment
 
@@ -60,12 +88,12 @@ Gemini is instructed to write **synthesised descriptions, not event logs** — p
 
 There are two enrichment paths depending on how Gemini names the character:
 
-- **Exact name match** — Gemini returns "John" and "John" already exists. The existing record is silently replaced with the updated version on every page the character appears on. This is the normal path and happens automatically with no notification.
-- **Near-duplicate name** — Gemini returns "Jon" or "Mr. Smith" for an existing "John" or "Smith" (Levenshtein distance ≤ 2, or one name is a substring of the other). The plugin detects the conflict and calls `enrichCharacter` to merge the new details into the existing record, then sets the **"cleanup needed"** flag since the merged fields may contain redundant text.
+- **Exact name match** — Gemini returns "John" and "John" already exists. The existing record is silently replaced with the updated version. This is the normal path.
+- **Near-duplicate name** — Gemini returns "Jon" or "Mr. Smith" for an existing "John" or "Smith" (Levenshtein distance ≤ 2, or one name is a substring of the other). The plugin merges the new details into the existing record and sets the **"cleanup needed"** flag.
 
 ### Duplicate and conflict detection
 
-When Gemini returns characters that look like existing ones (Levenshtein distance ≤ 2, or one name is a substring of another), the plugin detects the conflict and offers to enrich the existing character rather than create a duplicate. Within a single Gemini response, near-duplicates are collapsed before insertion.
+When Gemini returns characters that look like existing ones (Levenshtein distance ≤ 2, or one name is a substring of another), the plugin detects the conflict and enriches the existing character rather than creating a duplicate. Within a single Gemini response, near-duplicates are collapsed before insertion.
 
 ### Auto-extract
 
@@ -77,9 +105,18 @@ Scans every page in a chapter in batches of 4 pages per Gemini call, sleeping 3 
 
 ### Cleanup needed
 
-The **KoCharacters** menu title shows **"— cleanup needed"** when auto-extract has enriched one or more existing characters (merged new details from a near-duplicate) but skipped the Gemini deduplication pass to avoid blocking. Over multiple page scans, enriched fields can accumulate redundant phrases (e.g. "brave; brave" or "tall with dark hair; tall, dark hair").
+The **KoCharacters** menu title shows **"— cleanup needed"** when auto-extract has enriched one or more existing characters but skipped the Gemini deduplication pass to avoid blocking. Over multiple page scans, enriched fields can accumulate redundant phrases (e.g. "brave; brave" or "tall with dark hair; tall, dark hair").
 
 Run **"Cleanup all characters"** to send all affected profiles to Gemini for a single deduplication pass. The flag also clears automatically at the end of a chapter scan.
+
+### Portrait generation
+
+Portraits are generated via the **Google Imagen API** and saved as PNG files inside the book's data folder. The portrait prompt is built automatically from the character's appearance, personality, occupation, and the book context, and is styled to match the era and setting of the book.
+
+- **Batch generation** — select any number of characters from a list; characters that already have a portrait are marked with `[img]`
+- **Portrait filename** is stored on the character record so the image link survives name renames
+- **Model selection** — choose between fast, standard, or ultra Imagen models in AI Settings
+- Portraits are embedded in the HTML export with a **lightbox** (click to enlarge)
 
 ### Spoiler protection
 
@@ -89,18 +126,31 @@ Characters have an `unlocked` field. When spoiler protection is enabled in Setti
 
 Sends all saved character profiles to Gemini in one call and asks it to produce a text-based relationship map, listing each character's connections with short relationship labels.
 
+### Export
+
+**Export character list** produces a styled HTML file with all characters, their profiles, and any generated portraits. Portraits appear on the left with character info on the right; clicking a portrait opens a full-screen lightbox.
+
+**Export as ZIP** bundles the HTML file and the portraits folder into a single `.zip` file, ready to copy to another device.
+
+Both exports are saved inside the book's data folder (`kocharacters/<book_id>/`).
+
 ---
 
 ## Data storage
 
+All files for a book are stored together in a single subdirectory named after the book title:
+
 | Path | Contents |
 |---|---|
-| `<koreader_data>/kocharacters/<book_id>.json` | Per-book character database |
-| `<koreader_data>/kocharacters/<book_id>_scanned.json` | Scanned page index |
-| `<koreader_data>/kocharacters/usage_stats.json` | Daily Gemini API usage log |
-| `<koreader_data>/kocharacters/<book_id>_characters.txt` | Exported character list |
+| `<koreader_data>/kocharacters/<book_id>/characters.json` | Per-book character database |
+| `<koreader_data>/kocharacters/<book_id>/scanned.json` | Scanned page index |
+| `<koreader_data>/kocharacters/<book_id>/book_context.txt` | Auto-built genre/era/setting summary |
+| `<koreader_data>/kocharacters/<book_id>/portraits/` | Generated portrait images |
+| `<koreader_data>/kocharacters/<book_id>/characters.html` | Exported character list |
+| `<koreader_data>/kocharacters/<book_id>/characters.zip` | Exported ZIP (HTML + portraits) |
+| `<koreader_data>/kocharacters/usage_stats.json` | Daily API usage log (shared across books) |
 
-The book ID is derived from the filename and a byte-sum hash of the file path — no MD5, no document API calls required.
+The book ID is derived from the sanitized book title and a byte-sum hash of the file path — no MD5, no document API calls required.
 
 ---
 
@@ -111,6 +161,7 @@ The book ID is derived from the filename and a byte-sum hash of the file path �
 | **Name** | Full name or best available name |
 | **Aliases** | Nicknames, titles, alternate names |
 | **Role** | protagonist / antagonist / supporting / unknown |
+| **Occupation** | Job title or role in society (e.g. blacksmith, spy, physician) |
 | **Physical description** | Appearance details from explicit descriptions |
 | **Personality** | Stable traits synthesised from behaviour |
 | **Relationships** | Connections to other named characters |
@@ -122,20 +173,40 @@ The book ID is derived from the filename and a byte-sum hash of the file path �
 
 ## Settings
 
+### AI Settings (submenu)
+
 | Setting | Description |
 |---|---|
-| **Gemini API key** | Your key from aistudio.google.com |
+| **Gemini Character Extraction key** | API key used for character extraction, cleanup, and relationship mapping |
+| **Gemini Image Generation key** | API key used for portrait generation via Imagen |
+| **Imagen model** | Choose between `imagen-4.0-fast-generate-001`, `imagen-4.0-generate-001`, or `imagen-4.0-ultra-generate-001` |
+| **Edit extraction prompt** | Customise the prompt sent to Gemini for character extraction |
+| **Edit cleanup prompt** | Customise the deduplication prompt |
+| **Edit re-analyze prompt** | Customise the re-analysis prompt |
+| **Edit relationship map prompt** | Customise the relationship map prompt |
+| **Edit portrait prompt** | Customise the Imagen portrait generation prompt |
+| **View book context** | View the auto-built genre/era/setting summary; option to clear it |
+
+### General settings
+
+| Setting | Description |
+|---|---|
 | **Auto-extract on page turn** | Automatically scan each page as you read |
 | **Auto-extract delay** | Seconds to wait after a page turn before calling Gemini (default 10s) |
 | **Scan indicator icon** | Show/hide the scanning and count icons in the top-left corner |
 | **Auto-accept enrichments** | Silently enrich existing characters when near-duplicates are detected, instead of prompting |
 | **Spoiler protection** | Hide characters first seen beyond your current page |
-| **Edit prompts** | Customise the Gemini prompts for extraction, cleanup, re-analysis, and relationship mapping |
+| **View API usage** | Daily log of Gemini text calls and Imagen image generations |
+| **Clear character database** | Delete all saved characters for the current book |
+| **Reset prompts to default** | Restore all prompts to their built-in defaults |
 
 ---
 
 ## Requirements
 
 - KOReader with `ssl.https` / `ltn12` support (standard on Kindle builds)
-- A free Google Gemini API key from aistudio.google.com
+- A free Google Gemini API key from aistudio.google.com (for character extraction)
+- A Google Imagen API key (optional, for portrait generation)
 - `unzip` available on the device (standard on Kindle)
+- `base64` and `curl` available on the device (standard on Kindle, required for portrait generation)
+- `zip` available on the device (required for ZIP export — standard on Kindle via BusyBox)

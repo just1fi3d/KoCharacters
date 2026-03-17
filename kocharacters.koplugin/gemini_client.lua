@@ -12,7 +12,6 @@ GeminiClient.__index = GeminiClient
 local MODEL        = "gemini-3.1-flash-lite-preview"
 local API_BASE     = "https://generativelanguage.googleapis.com/v1beta/models/" .. MODEL .. ":generateContent"
 local API_MODELS_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
-local IMAGEN_BASE  = "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict"
 
 -- Safe placeholder substitution (handles % in values correctly)
 local function sub(s, placeholder, value)
@@ -52,19 +51,24 @@ Rules:
 - For physical_description: summarise explicit appearance details only. Do not infer appearance from actions.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 
-Return ONLY a valid JSON array with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON array.
-Each element must follow this exact structure:
-[
-  {
-    "name": "Full name or best available name",
-    "aliases": ["nickname", "title"],
-    "first_appearance_quote": "A short verbatim quote from the text where they first appear",
-    "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
-    "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
-    "role": "protagonist or antagonist or supporting or unknown",
-    "relationships": ["Relationship to other characters if mentioned"]
-  }
-]
+Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
+{
+  "book_context": "2-3 sentences describing the genre, country/region, and historical period or era of the story. Current known context: {{book_context}} — update and expand this if the passage adds new information, otherwise return it unchanged. Leave empty string only if nothing is known.",
+  "characters": [
+    {
+      "name": "Full name or best available name",
+      "aliases": ["nickname", "title"],
+      "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — empty string if unknown",
+      "first_appearance_quote": "A short verbatim quote from the text where they first appear",
+      "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
+      "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
+      "role": "protagonist or antagonist or supporting or unknown",
+      "relationships": ["Relationship to other characters if mentioned"]
+    }
+  ]
+}
+
+If there are no characters to report, use an empty array for "characters": []
 
 Page text:
 ---
@@ -92,6 +96,7 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
   {
     "name": "Full name or best available name",
     "aliases": ["nickname", "title"],
+    "occupation": "Job title, profession, or social role — empty string if unknown",
     "first_appearance_quote": "Keep existing quote unless a better one is found in this passage",
     "physical_description": "Merged appearance summary — explicit descriptions only",
     "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
@@ -132,7 +137,7 @@ function GeminiClient:new(api_key)
 end
 
 -- Build the extraction prompt
-function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, template)
+function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, template, book_context)
     local skip_str = "none"
     if skip_names and #skip_names > 0 then
         skip_str = table.concat(skip_names, ", ")
@@ -143,10 +148,13 @@ function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, te
         existing_str = json.encode(existing_characters)
     end
 
+    local ctx_str = (book_context and book_context ~= "") and book_context or "none"
+
     local tmpl = template or GeminiClient.DEFAULT_EXTRACTION_PROMPT
-    tmpl = sub(tmpl, "{{existing}}", existing_str)
-    tmpl = sub(tmpl, "{{skip}}",     skip_str)
-    tmpl = sub(tmpl, "{{text}}",     page_text)
+    tmpl = sub(tmpl, "{{existing}}",     existing_str)
+    tmpl = sub(tmpl, "{{skip}}",         skip_str)
+    tmpl = sub(tmpl, "{{text}}",         page_text)
+    tmpl = sub(tmpl, "{{book_context}}", ctx_str)
     return tmpl
 end
 
@@ -160,12 +168,12 @@ local function stripCodeFences(text)
 end
 
 -- Send request to Gemini and return parsed character list or error
-function GeminiClient:extractCharacters(page_text, skip_names, existing_characters, extraction_prompt)
+function GeminiClient:extractCharacters(page_text, skip_names, existing_characters, extraction_prompt, book_context)
     if not self.api_key or self.api_key == "" then
         return nil, "API key is not set. Please configure it in the plugin settings."
     end
 
-    local prompt = self:buildPrompt(page_text, skip_names, existing_characters, extraction_prompt)
+    local prompt = self:buildPrompt(page_text, skip_names, existing_characters, extraction_prompt, book_context)
 
     -- Gemini request body
     local request_body = json.encode({
@@ -238,17 +246,29 @@ function GeminiClient:extractCharacters(page_text, skip_names, existing_characte
     -- Strip any accidental code fences
     text = stripCodeFences(text)
 
-    -- Parse the JSON array Gemini returned
-    local characters, _, jerr = json.decode(text)
-    if not characters then
+    -- Parse the JSON object Gemini returned
+    local result, _, jerr = json.decode(text)
+    if not result then
         return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
     end
 
-    if type(characters) ~= "table" then
-        return nil, "Expected a JSON array, got: " .. type(characters)
+    -- Support both new object format {characters, book_context} and legacy bare array
+    local characters, book_context
+    if type(result) == "table" and result.characters then
+        characters   = result.characters
+        book_context = result.book_context
+    elseif type(result) == "table" and not result.characters then
+        -- bare array (legacy or fallback)
+        characters = result
+    else
+        return nil, "Expected a JSON object or array, got: " .. type(result)
     end
 
-    return characters, nil, extractUsage(parsed)
+    if type(characters) ~= "table" then
+        characters = {}
+    end
+
+    return characters, nil, extractUsage(parsed), book_context
 end
 
 -- Re-analyze a single known character against a new page passage
@@ -521,68 +541,6 @@ function GeminiClient:fetchModelInfo()
         return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
     end
     return parsed, nil
-end
-
--- Generate a portrait for a character using Imagen
--- Returns base64-encoded PNG data string, or nil + error
-function GeminiClient:generatePortrait(char)
-    if not self.api_key or self.api_key == "" then
-        return nil, "API key is not set."
-    end
-
-    -- Build a compact prompt, keeping well under the 480-token limit
-    local name  = char.name or "Unknown"
-    local role  = (char.role and char.role ~= "" and char.role ~= "unknown") and char.role or nil
-    local phys  = char.physical_description or ""
-    local pers  = char.personality or ""
-
-    -- Truncate long fields to stay under token budget
-    if #phys > 300 then phys = phys:sub(1, 297) .. "..." end
-    if #pers > 200 then pers = pers:sub(1, 197) .. "..." end
-
-    local parts = { "Portrait of " .. name .. ", a fictional character from a novel." }
-    if role then table.insert(parts, name .. " is a " .. role .. ".") end
-    if phys ~= "" then table.insert(parts, phys) end
-    if pers ~= "" then table.insert(parts, "Personality: " .. pers) end
-    table.insert(parts, "Painted portrait, detailed, realistic, neutral background.")
-
-    local prompt = table.concat(parts, " ")
-
-    local request_body = json.encode({
-        instances  = { { prompt = prompt } },
-        parameters = { sampleCount = 1 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url    = IMAGEN_BASE .. "?key=" .. self.api_key,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse Imagen response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "Imagen API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local b64 = parsed.predictions
-        and parsed.predictions[1]
-        and parsed.predictions[1].bytesBase64Encoded
-    if not b64 or b64 == "" then
-        return nil, "Imagen returned no image data"
-    end
-
-    return b64, nil
 end
 
 return GeminiClient

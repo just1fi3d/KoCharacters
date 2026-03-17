@@ -288,12 +288,16 @@ function KoCharacters:autoExtract(page_num)
     end
 
     local client = GeminiClient:new(api_key)
-    local characters, api_err, usage
+    local characters, api_err, usage, book_context
     local ok, call_err = pcall(function()
-        characters, api_err, usage = client:extractCharacters(
-            page_text, skip_names, chars_in_text, self:getExtractionPrompt())
+        characters, api_err, usage, book_context = client:extractCharacters(
+            page_text, skip_names, chars_in_text, self:getExtractionPrompt(),
+            self.db:loadBookContext(book_id))
     end)
     if ok and not api_err then self:recordUsage(usage) end
+    if ok and book_context and book_context ~= "" then
+        self.db:saveBookContext(book_id, book_context)
+    end
 
     if not ok or api_err or not characters or #characters == 0 then
         self:hideScanIndicator()
@@ -331,7 +335,7 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self:onScanChapter() end,
             },
             {
-                text     = _("Scan specific chapter..."),
+                text     = _("Scan specific chapter"),
                 callback = function() self:onScanSpecificChapter() end,
             },
             {
@@ -339,7 +343,7 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self:onViewCharacters() end,
             },
             {
-                text     = _("Re-analyze character..."),
+                text     = _("Re-analyze character"),
                 callback = function() self:onReanalyzeCharacterPicker() end,
             },
             {
@@ -351,11 +355,34 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self:onCleanupAllCharacters() end,
             },
             {
-                text     = _("Export character list"),
-                callback = function() self:onExportCharacters() end,
+                text     = _("Generate portraits"),
+                callback = function() self:onBatchGeneratePortraits() end,
             },
             {
-                text     = _("Settings"),
+                text     = _("Export..."),
+                callback = function()
+                    local self_ref = self
+                    local export_menu
+                    export_menu = Menu:new{
+                        title      = "Export",
+                        item_table = {
+                            {
+                                text     = "Export character list",
+                                callback = function() UIManager:close(export_menu); self_ref:onExportCharacters() end,
+                            },
+                            {
+                                text     = "Export as ZIP (HTML + portraits)",
+                                callback = function() UIManager:close(export_menu); self_ref:onExportZip() end,
+                            },
+                        },
+                        width       = Screen:getWidth(),
+                        show_parent = self.ui,
+                    }
+                    UIManager:show(export_menu)
+                end,
+            },
+            {
+                text     = _("Settings..."),
                 callback = function() self:onOpenSettings() end,
             },
         },
@@ -667,8 +694,14 @@ function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_
     processConflicts(conflicts)
 end
 
+-- Key for Gemini text calls (character extraction, cleanup, etc.)
 function KoCharacters:getApiKey()
-    return G_reader_settings:readSetting("kocharacters_api_key") or ""
+    return G_reader_settings:readSetting("kocharacters_extraction_api_key") or ""
+end
+
+-- Key for Imagen image generation
+function KoCharacters:getImagenApiKey()
+    return G_reader_settings:readSetting("kocharacters_imagen_api_key") or ""
 end
 
 function KoCharacters:getCurrentPage()
@@ -697,6 +730,13 @@ function KoCharacters:getRelationshipMapPrompt()
         or GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
 end
 
+local DEFAULT_PORTRAIT_PROMPT = [[Oil painting portrait of a fictional {{role}} character, occupation: {{occupation}}. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Appearance: {{appearance}} Personality expressed through posture and expression: {{personality}} Book setting: {{book_context}} Use historically accurate clothing, hairstyle, and setting consistent with the character's era, occupation, and the book setting. Paint in the style of a master portrait painter from that same era — matching the composition, lighting, brushwork, color palette, and aesthetic conventions of period-authentic portraiture (e.g. Renaissance, Baroque, Victorian, etc. as appropriate). Dark or neutral background, formal pose, fine detail in fabric and face.]]
+
+function KoCharacters:getPortraitPrompt()
+    return G_reader_settings:readSetting("kocharacters_portrait_prompt")
+        or DEFAULT_PORTRAIT_PROMPT
+end
+
 function KoCharacters:recordUsage(usage)
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
@@ -714,11 +754,14 @@ function KoCharacters:recordUsage(usage)
 
     local date = os.date("%Y-%m-%d")
     if not stats[date] then
-        stats[date] = { calls = 0, prompt_tokens = 0, output_tokens = 0 }
+        stats[date] = { calls = 0, prompt_tokens = 0, output_tokens = 0, images = 0 }
     end
     stats[date].calls         = (stats[date].calls         or 0) + 1
     stats[date].prompt_tokens = (stats[date].prompt_tokens or 0) + (usage and usage.prompt_tokens or 0)
     stats[date].output_tokens = (stats[date].output_tokens or 0) + (usage and usage.output_tokens or 0)
+    if usage and usage.images then
+        stats[date].images = (stats[date].images or 0) + usage.images
+    end
 
     local fw = io.open(path, "w")
     if fw then fw:write(json.encode(stats)); fw:close() end
@@ -794,24 +837,26 @@ function KoCharacters:onViewUsage()
         return
     end
 
-    local lines = { "Date            Calls  Prompt     Output" }
-    table.insert(lines, string.rep("-", 46))
-    local tot_calls, tot_prompt, tot_output = 0, 0, 0
+    local lines = { "Date            Calls  Prompt     Output     Images" }
+    table.insert(lines, string.rep("-", 52))
+    local tot_calls, tot_prompt, tot_output, tot_images = 0, 0, 0, 0
     for _, date in ipairs(dates) do
         local d = stats[date]
         local c = d.calls         or 0
         local p = d.prompt_tokens or 0
         local o = d.output_tokens or 0
+        local i = d.images        or 0
         tot_calls  = tot_calls  + c
         tot_prompt = tot_prompt + p
         tot_output = tot_output + o
-        table.insert(lines, string.format("%-16s %-6d %-10d %d", date, c, p, o))
+        tot_images = tot_images + i
+        table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", date, c, p, o, i))
     end
-    table.insert(lines, string.rep("-", 46))
-    table.insert(lines, string.format("%-16s %-6d %-10d %d", "TOTAL", tot_calls, tot_prompt, tot_output))
+    table.insert(lines, string.rep("-", 52))
+    table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", "TOTAL", tot_calls, tot_prompt, tot_output, tot_images))
 
     UIManager:show(TextViewer:new{
-        title  = "Gemini API Usage",
+        title  = "API Usage (Gemini + Imagen)",
         text   = table.concat(lines, "\n"),
         width  = math.floor(Screen:getWidth() * 0.9),
         height = math.floor(Screen:getHeight() * 0.85),
@@ -822,14 +867,29 @@ end
 function KoCharacters:getBookID()
     if self.ui and self.ui.document and self.ui.document.file then
         local path = self.ui.document.file
-        -- Simple hash: sum of byte values + length, good enough for a filename key
+        -- Hash for uniqueness (two books can share a title)
         local sum = #path
-        for i = 1, #path do
-            sum = sum + string.byte(path, i)
+        for i = 1, #path do sum = sum + string.byte(path, i) end
+
+        -- Prefer metadata title, fall back to filename without extension
+        local title = ""
+        if self.ui.doc_settings then
+            local ok, props = pcall(function() return self.ui.doc_settings:readSetting("doc_props") end)
+            if ok and props and props.title and props.title ~= "" then
+                title = props.title
+            end
         end
-        local fname = path:match("([^/]+)$") or "book"
-        fname = fname:gsub("[^%w%-_]", "_")
-        return fname .. "_" .. tostring(sum)
+        if title == "" then
+            local fname = path:match("([^/]+)$") or "book"
+            title = fname:gsub("%.[^%.]+$", "")  -- strip extension
+        end
+
+        -- Sanitize: keep letters, digits, spaces, hyphens; collapse whitespace to underscore
+        title = title:gsub("[^%w%s%-]", ""):gsub("%s+", "_"):gsub("_+", "_")
+        title = title:match("^_*(.-)_*$") or title  -- trim leading/trailing underscores
+        if title == "" then title = "book" end
+
+        return title .. "_" .. tostring(sum)
     end
     return nil
 end
@@ -1112,6 +1172,12 @@ function KoCharacters:formatCharacter(c)
         table.insert(lines, c.role)
     end
 
+    if c.occupation and c.occupation ~= "" then
+        table.insert(lines, "")
+        table.insert(lines, "OCCUPATION")
+        table.insert(lines, c.occupation)
+    end
+
     if c.physical_description and c.physical_description ~= "" then
         table.insert(lines, "")
         table.insert(lines, "APPEARANCE")
@@ -1236,6 +1302,14 @@ function KoCharacters:onEditCharacter(book_id, char)
                 end,
             },
             {
+                text     = "Occupation",
+                callback = function()
+                    editTextField("Occupation", char.occupation, false, function(val)
+                        char.occupation = val ~= "" and val or nil; save()
+                    end)
+                end,
+            },
+            {
                 text     = "Appearance",
                 callback = function()
                     editTextField("Appearance", char.physical_description, true, function(val)
@@ -1349,13 +1423,20 @@ function KoCharacters:onExtractCurrentPage()
         logger.info("KoCharacters: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
 
         local client = GeminiClient:new(api_key)
-        local characters, err, usage
+        local characters, err, usage, book_context
         local ok, call_err = pcall(function()
-            characters, err, usage = client:extractCharacters(page_text, skip_names, chars_in_text, self:getExtractionPrompt())
+            characters, err, usage, book_context = client:extractCharacters(
+                page_text, skip_names, chars_in_text, self:getExtractionPrompt(),
+                self.db:loadBookContext(book_id))
         end)
 
         UIManager:close(working_msg)
         if ok and not err then self:recordUsage(usage) end
+
+        -- Save book context returned alongside characters (no extra API call)
+        if ok and book_context and book_context ~= "" then
+            self.db:saveBookContext(book_id, book_context)
+        end
 
         if not ok then
             logger.warn("KoCharacters: pcall error: " .. tostring(call_err))
@@ -1663,11 +1744,18 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
             else table.insert(skip_names, c.name) end
         end
 
-        local characters, err, usage
+        local characters, err, usage, book_context
         local ok, call_err = pcall(function()
-            characters, err, usage = client:extractCharacters(combined_text, skip_names, chars_in_text, self_ref:getExtractionPrompt())
+            characters, err, usage, book_context = client:extractCharacters(
+                combined_text, skip_names, chars_in_text, self_ref:getExtractionPrompt(),
+                self_ref.db:loadBookContext(book_id))
         end)
         if ok and not err then self_ref:recordUsage(usage) end
+
+        -- Save book context returned alongside characters (no extra API call)
+        if ok and book_context and book_context ~= "" then
+            self_ref.db:saveBookContext(book_id, book_context)
+        end
 
         if not ok then
             logger.warn("KoCharacters: batch " .. batch_num .. " pcall: " .. tostring(call_err))
@@ -1870,29 +1958,6 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                                     self_ref:onGeneratePortrait(book_id, char)
                                 end,
                             },
-                        },
-                        {
-                            {
-                                text     = "Re-analyze",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onReanalyzeCharacter(book_id, char)
-                                end,
-                            },
-                            {
-                                text     = "Clean up",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onCleanCharacter(book_id, char.name)
-                                end,
-                            },
-                            {
-                                text     = "Edit",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onEditCharacter(book_id, char)
-                                end,
-                            },
                             {
                                 text     = "Merge into...",
                                 callback = function()
@@ -1929,7 +1994,7 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                                 end,
                             },
                             {
-                                text     = "Delete character",
+                                text     = "Delete Character",
                                 callback = function()
                                     UIManager:close(viewer)
                                     UIManager:show(ConfirmBox:new{
@@ -1940,6 +2005,29 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                                             self_ref:showMsg(name .. " deleted.", 2)
                                         end,
                                     })
+                                end,
+                            },
+                        },
+                        {
+                            {
+                                text     = "Re-analyze",
+                                callback = function()
+                                    UIManager:close(viewer)
+                                    self_ref:onReanalyzeCharacter(book_id, char)
+                                end,
+                            },
+                            {
+                                text     = "Clean up",
+                                callback = function()
+                                    UIManager:close(viewer)
+                                    self_ref:onCleanCharacter(book_id, char.name)
+                                end,
+                            },
+                            {
+                                text     = "Edit",
+                                callback = function()
+                                    UIManager:close(viewer)
+                                    self_ref:onEditCharacter(book_id, char)
                                 end,
                             },
                         },
@@ -1968,49 +2056,203 @@ end
 -- Return the full filesystem path to a character's portrait PNG
 function KoCharacters:portraitPath(book_id, char_name)
     local DataStorage = require("datastorage")
-    local dir = DataStorage:getDataDir() .. "/kocharacters/portraits/" .. book_id
+    local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
     local util = require("util")
     util.makePath(dir)
     return dir .. "/" .. portraitSafeName(char_name) .. ".png"
 end
 
--- Generate and save a portrait for the given character
+-- Generate and save a portrait using Imagen
+-- Core portrait generation logic. Returns nil on success, error string on failure.
+function KoCharacters:generatePortraitForChar(book_id, char)
+    local DataStorage = require("datastorage")
+    local json        = require("dkjson")
+    local util        = require("util")
+    local portraits_dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
+    util.makePath(portraits_dir)
+
+    local name  = char.name or "Unknown"
+    local role  = (char.role and char.role ~= "" and char.role ~= "unknown") and (char.role) or ""
+    local occ   = char.occupation or ""
+    local phys  = char.physical_description or ""
+    local pers  = char.personality or ""
+    local quote = char.first_appearance_quote or ""
+    local rels  = (char.relationships and #char.relationships > 0)
+                  and table.concat(char.relationships, "; ") or ""
+
+    local function sub(s, key, val)
+        return (s:gsub("{{" .. key .. "}}", function() return val end))
+    end
+    local book_context = CharacterDB:loadBookContext(book_id)
+    local tmpl   = self:getPortraitPrompt()
+    local prompt = sub(sub(sub(sub(sub(sub(sub(sub(tmpl,
+        "name", name), "role", role), "occupation", occ),
+        "appearance", phys), "personality", pers),
+        "relationships", rels), "context", quote),
+        "book_context", book_context)
+
+    local api_key   = self:getImagenApiKey()
+    local out_path  = self:portraitPath(book_id, char.name)
+    local req_file  = portraits_dir .. "/.imagen_req.json"
+    local resp_file = portraits_dir .. "/.imagen_resp.json"
+
+    local fq = io.open(req_file, "w")
+    if not fq then return "Could not write request file." end
+    fq:write(json.encode({
+        instances  = {{ prompt = prompt }},
+        parameters = { sampleCount = 1, aspectRatio = "1:1" },
+    }))
+    fq:close()
+
+    local imagen_model = G_reader_settings:readSetting("kocharacters_imagen_model") or "imagen-4.0-fast-generate-001"
+    local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. imagen_model .. ":predict?key=" .. api_key
+    os.execute(string.format(
+        'curl -s --max-time 120 -X POST -H "Content-Type: application/json" -d @"%s" "%s" -o "%s"',
+        req_file, url, resp_file
+    ))
+    os.remove(req_file)
+
+    local f = io.open(resp_file, "r")
+    if not f then return "No response from Imagen API." end
+    local raw = f:read("*a")
+    f:close()
+    os.remove(resp_file)
+
+    local parsed = json.decode(raw)
+    if not parsed then return "Could not parse Imagen response:\n" .. raw:sub(1, 200) end
+    if parsed.error then return "Imagen error:\n" .. (parsed.error.message or json.encode(parsed.error)) end
+
+    local b64 = parsed.predictions and parsed.predictions[1] and parsed.predictions[1].bytesBase64Encoded
+    if not b64 or b64 == "" then return "Imagen returned no image.\n" .. raw:sub(1, 200) end
+
+    local tmp_b64 = portraits_dir .. "/.tmp_b64"  -- temp file inside the book's portraits dir
+    local fb = io.open(tmp_b64, "w")
+    if not fb then return "Could not write temp file." end
+    fb:write(b64)
+    fb:close()
+
+    local ret = os.execute('base64 -d "' .. tmp_b64 .. '" > "' .. out_path .. '"')
+    os.remove(tmp_b64)
+    if ret ~= 0 then return "Failed to decode portrait image." end
+
+    local portrait_filename = portraitSafeName(char.name) .. ".png"
+    char.portrait_file = portrait_filename
+    self.db:updateCharacter(book_id, char.name, char)
+    self:recordUsage({ images = 1 })
+    return nil
+end
+
 function KoCharacters:onGeneratePortrait(book_id, char)
-    local msg = InfoMessage:new{ text = "Generating portrait for " .. char.name .. "…" }
+    local msg = InfoMessage:new{ text = "Generating portrait for " .. (char.name or "character") .. "…" }
     UIManager:show(msg)
     UIManager:forceRePaint()
-
-    local b64, err = self.gemini:generatePortrait(char)
+    local err = self:generatePortraitForChar(book_id, char)
     UIManager:close(msg)
-
-    if not b64 then
-        self:showMsg("Portrait failed:\n" .. (err or "unknown error"))
-        return
+    if err then
+        self:showMsg(err, 8)
+    else
+        self:showMsg("Portrait saved for " .. (char.name or "character") .. ".", 3)
     end
+end
 
-    -- Decode base64 PNG via BusyBox base64 utility
+-- Check whether a portrait file exists for a character
+function KoCharacters:hasPortrait(book_id, char)
     local DataStorage = require("datastorage")
-    local tmp_path  = DataStorage:getDataDir() .. "/kocharacters/portraits/.tmp_b64"
-    local out_path  = self:portraitPath(book_id, char.name)
+    local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits/"
+    if char.portrait_file and char.portrait_file ~= "" then
+        local f = io.open(dir .. char.portrait_file, "r")
+        if f then f:close(); return true end
+    end
+    local safe = portraitSafeName(char.name or "")
+    for _, ext in ipairs({ ".jpg", ".png" }) do
+        local f = io.open(dir .. safe .. ext, "r")
+        if f then f:close(); return true end
+    end
+    return false
+end
 
-    local ftmp = io.open(tmp_path, "w")
-    if not ftmp then
-        self:showMsg("Could not write temp file for portrait.")
+function KoCharacters:onBatchGeneratePortraits()
+    local book_id = self:getBookID()
+    if not book_id then self:showMsg("No book open."); return end
+
+    local characters = self.db:load(book_id)
+    if #characters == 0 then
+        self:showMsg("No characters saved yet.")
         return
     end
-    ftmp:write(b64)
-    ftmp:close()
 
-    local cmd = 'base64 -d "' .. tmp_path .. '" > "' .. out_path .. '"'
-    local ret = os.execute(cmd)
-    os.remove(tmp_path)
+    local ok, Menu = pcall(require, "ui/widget/menu")
+    if not ok then return end
 
-    if ret ~= 0 then
-        self:showMsg("Failed to decode portrait image.")
-        return
+    local selected  = {}
+    local self_ref  = self
+    local menu_ref
+
+    local function showSelectionMenu()
+        local n = 0
+        for _ in pairs(selected) do n = n + 1 end
+
+        local items = {}
+        table.insert(items, {
+            text = n > 0 and ("Generate portraits for " .. n .. " character(s)") or "(tap characters to select)",
+            callback = function()
+                if n == 0 then return end
+                UIManager:close(menu_ref)
+
+                local to_gen = {}
+                for i, c in ipairs(characters) do
+                    if selected[i] then table.insert(to_gen, c) end
+                end
+
+                local succeeded, failed = 0, {}
+                for idx, char in ipairs(to_gen) do
+                    local prog = InfoMessage:new{
+                        text = "Generating portrait " .. idx .. "/" .. #to_gen .. "\n" .. (char.name or "")
+                    }
+                    UIManager:show(prog)
+                    UIManager:forceRePaint()
+                    local gen_err = self_ref:generatePortraitForChar(book_id, char)
+                    UIManager:close(prog)
+                    if gen_err then
+                        table.insert(failed, (char.name or "?") .. ": " .. gen_err)
+                    else
+                        succeeded = succeeded + 1
+                    end
+                end
+
+                local summary = "Done. " .. succeeded .. "/" .. #to_gen .. " portrait(s) saved."
+                if #failed > 0 then
+                    summary = summary .. "\n\nFailed:\n" .. table.concat(failed, "\n")
+                end
+                self_ref:showMsg(summary, 6)
+            end,
+        })
+
+        for i, c in ipairs(characters) do
+            local has_img = self_ref:hasPortrait(book_id, c)
+            local check   = selected[i] and "[x] " or "[ ] "
+            local img_tag = has_img and " [img]" or ""
+            local idx     = i
+            table.insert(items, {
+                text = check .. (c.name or "Unknown") .. img_tag,
+                callback = function()
+                    selected[idx] = not selected[idx] or nil
+                    UIManager:close(menu_ref)
+                    showSelectionMenu()
+                end,
+            })
+        end
+
+        menu_ref = Menu:new{
+            title       = "Select characters — [img] = portrait exists",
+            item_table  = items,
+            width       = Screen:getWidth(),
+            show_parent = self_ref.ui,
+        }
+        UIManager:show(menu_ref)
     end
 
-    self:showMsg("Portrait saved for " .. char.name .. ".", 3)
+    showSelectionMenu()
 end
 
 function KoCharacters:onExportCharacters()
@@ -2026,7 +2268,7 @@ function KoCharacters:onExportCharacters()
     end
     local title = self:getBookTitle()
     local DataStorage = require("datastorage")
-    local export_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "_characters.html"
+    local export_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/characters.html"
 
     local function esc(s)
         s = tostring(s or "")
@@ -2044,17 +2286,26 @@ function KoCharacters:onExportCharacters()
     p('<meta name="viewport" content="width=device-width,initial-scale=1">')
     p('<title>' .. esc(title) .. '</title>')
     p('<style>')
-    p('body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:0 20px;background:#fdf6e3;color:#333;}')
+    p('body{font-family:Georgia,serif;max-width:860px;margin:40px auto;padding:0 20px;background:#fdf6e3;color:#333;}')
     p('h1{font-size:1.6em;border-bottom:2px solid #c9a84c;padding-bottom:8px;color:#5a3e1b;}')
-    p('.character{background:#fff;border:1px solid #ddd;border-radius:6px;padding:20px;margin:20px 0;box-shadow:0 1px 3px rgba(0,0,0,.08);}')
-    p('.char-name{font-size:1.3em;font-weight:bold;color:#5a3e1b;margin:0 0 4px;}')
-    p('.char-role{font-size:.9em;color:#888;margin:0 0 12px;font-style:italic;}')
-    p('.field label{font-weight:bold;font-size:.85em;text-transform:uppercase;letter-spacing:.05em;color:#999;}')
-    p('.field p{margin:2px 0 10px;line-height:1.5;}')
-    p('.aliases,.relationships{color:#555;}')
-    p('.quote{border-left:3px solid #c9a84c;padding-left:12px;color:#666;font-style:italic;}')
-    p('.portrait{float:right;margin:0 0 12px 16px;border:1px solid #ddd;border-radius:4px;max-width:180px;max-height:240px;}')
+    p('.character{display:flex;align-items:stretch;background:#fff;border:1px solid #ddd;border-radius:8px;margin:24px 0;box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden;}')
+    p('.char-portrait{flex:0 0 240px;background:#1c1812;border-right:1px solid #e0d8cc;}')
+    p('.char-portrait a{display:block;height:100%;}')
+    p('.char-portrait img{width:240px;height:100%;object-fit:cover;object-position:top center;display:block;cursor:zoom-in;transition:opacity .15s;}')
+    p('.char-portrait img:hover{opacity:.88;}')
+    p('.char-info{flex:1;padding:22px 26px;min-width:0;}')
+    p('.char-name{font-size:1.35em;font-weight:bold;color:#5a3e1b;margin:0 0 2px;}')
+    p('.char-role{font-size:.88em;color:#aaa;font-style:italic;margin:0 0 16px;}')
+    p('.field{margin-bottom:12px;}')
+    p('.field label{display:block;font-weight:bold;font-size:.78em;text-transform:uppercase;letter-spacing:.07em;color:#bbb;margin-bottom:2px;}')
+    p('.field p{margin:0;line-height:1.6;color:#444;}')
+    p('.quote{border-left:3px solid #c9a84c;padding-left:12px;color:#888;font-style:italic;}')
+    p('#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:999;align-items:center;justify-content:center;cursor:zoom-out;}')
+    p('#lb.on{display:flex;}')
+    p('#lb img{max-width:92vw;max-height:92vh;object-fit:contain;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,.7);}')
+    p('@media(max-width:580px){.character{flex-direction:column;}.char-portrait{flex:none;width:100%;border-right:none;border-bottom:1px solid #e0d8cc;}.char-portrait img{width:100%;height:260px;}.char-info{padding:16px;}}')
     p('</style></head><body>')
+    p('<div id="lb" onclick="this.classList.remove(\'on\')"><img id="lb-img" src="" alt=""></div>')
     p('<h1>' .. esc(title) .. '</h1>')
     p('<p style="color:#888;font-size:.85em;">' .. #characters .. ' character(s)</p>')
     p('<nav style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:16px 20px;margin-bottom:24px;">')
@@ -2071,16 +2322,39 @@ function KoCharacters:onExportCharacters()
         local anchor = esc(c.name or "Unknown"):gsub("%s+", "-"):lower()
         p('<div class="character" id="' .. anchor .. '">')
         -- Embed portrait if one has been generated
-        local portrait_rel = "portraits/" .. book_id .. "/" .. portraitSafeName(c.name or "Unknown") .. ".png"
-        local portrait_abs = DataStorage:getDataDir() .. "/kocharacters/" .. portrait_rel
-        local pf = io.open(portrait_abs, "r")
-        if pf then
-            pf:close()
-            p('<img class="portrait" src="' .. portrait_rel .. '" alt="Portrait of ' .. esc(c.name or "Unknown") .. '">')
+        -- Prefer the stored portrait_file (survives renames), fall back to name-based lookup
+        local portrait_rel
+        local portraits_base = "portraits/"
+        local portraits_abs  = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits/"
+        if c.portrait_file and c.portrait_file ~= "" then
+            local pf = io.open(portraits_abs .. c.portrait_file, "r")
+            if pf then pf:close(); portrait_rel = portraits_base .. c.portrait_file end
         end
+        if not portrait_rel then
+            local safe_name = portraitSafeName(c.name or "Unknown")
+            for _, ext in ipairs({ ".jpg", ".png" }) do
+                local pf = io.open(portraits_abs .. safe_name .. ext, "r")
+                if pf then pf:close(); portrait_rel = portraits_base .. safe_name .. ext; break end
+            end
+        end
+        -- Portrait (left column) — emitted first in DOM so it appears on the left in the flex row
+        if portrait_rel then
+            local img_src = portrait_rel
+            local alt     = esc(c.name or "Unknown")
+            p('<div class="char-portrait">')
+            p('<a href="' .. img_src .. '" onclick="event.preventDefault();document.getElementById(\'lb-img\').src=this.href;document.getElementById(\'lb\').classList.add(\'on\');">')
+            p('<img src="' .. img_src .. '" alt="Portrait of ' .. alt .. '">')
+            p('</a>')
+            p('</div>')
+        end
+        -- Info (right column)
+        p('<div class="char-info">')
         p('<div class="char-name">' .. esc(c.name or "Unknown") .. '</div>')
         if c.role and c.role ~= "" then
             p('<div class="char-role">' .. esc(c.role) .. '</div>')
+        end
+        if c.occupation and c.occupation ~= "" then
+            p('<div class="field"><label>Occupation</label><p>' .. esc(c.occupation) .. '</p></div>')
         end
         if c.aliases and #c.aliases > 0 then
             p('<div class="field aliases"><label>Also known as</label><p>' .. esc(table.concat(c.aliases, ", ")) .. '</p></div>')
@@ -2103,9 +2377,9 @@ function KoCharacters:onExportCharacters()
             p('<div class="field" style="border-top:1px dashed #e0c97a;margin-top:10px;padding-top:10px;"><label>My notes</label><p style="white-space:pre-wrap;">' .. esc(c.user_notes) .. '</p></div>')
         end
         if c.source_page then
-            p('<div style="margin-top:10px;font-size:.8em;color:#bbb;text-align:right;">Last updated: page ' .. esc(tostring(c.source_page)) .. '</div>')
+            p('<div style="margin-top:10px;font-size:.8em;color:#bbb;">Last updated: page ' .. esc(tostring(c.source_page)) .. '</div>')
         end
-        p('<div style="clear:both;"></div>')
+        p('</div>')
         p('</div>')
     end
 
@@ -2119,6 +2393,66 @@ function KoCharacters:onExportCharacters()
     f:write(table.concat(parts, "\n"))
     f:close()
     self:showMsg("Exported to:\n" .. export_path, 5)
+end
+
+function KoCharacters:onExportZip()
+    local book_id = self:getBookID()
+    if not book_id then
+        self:showMsg("Cannot identify book.")
+        return
+    end
+    local characters = self.db:load(book_id)
+    if #characters == 0 then
+        self:showMsg("No characters to export yet.")
+        return
+    end
+
+    local msg = InfoMessage:new{ text = "Building ZIP…" }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+
+    local DataStorage = require("datastorage")
+    local base_dir    = DataStorage:getDataDir() .. "/kocharacters/" .. book_id
+    local html_path   = base_dir .. "/characters.html"
+    local zip_path    = base_dir .. "/characters.zip"
+
+    -- Generate the HTML (same as onExportCharacters but silent)
+    self:onExportCharacters()  -- writes characters.html inside base_dir
+
+    -- Remove old zip if present
+    os.remove(zip_path)
+
+    -- Build zip: HTML + portraits folder, paths relative to base_dir
+    -- BusyBox zip: zip -r <zipfile> <files...> from inside base_dir
+    local cmd = string.format(
+        'cd "%s" && zip -r "characters.zip" "characters.html" "portraits" 2>/dev/null; echo $?',
+        base_dir
+    )
+    local handle = io.popen(cmd)
+    local result = handle and handle:read("*a") or ""
+    if handle then handle:close() end
+
+    UIManager:close(msg)
+
+    local exit_code = tonumber(result:match("%d+$") or "1")
+    if exit_code ~= 0 then
+        -- portraits dir might not exist (no images yet) — try without it
+        cmd = string.format(
+            'cd "%s" && zip "characters.zip" "characters.html" 2>/dev/null; echo $?',
+            base_dir
+        )
+        handle = io.popen(cmd)
+        result = handle and handle:read("*a") or ""
+        if handle then handle:close() end
+        exit_code = tonumber(result:match("%d+$") or "1")
+    end
+
+    if exit_code ~= 0 then
+        self:showMsg("ZIP creation failed.\nIs 'zip' available on this device?", 6)
+        return
+    end
+
+    self:showMsg("ZIP saved to:\n" .. zip_path, 6)
 end
 
 function KoCharacters:onCleanupAllCharacters()
@@ -2208,15 +2542,121 @@ end
 function KoCharacters:onOpenSettings()
     local ok, Menu = pcall(require, "ui/widget/menu")
     if not ok then
-        self:onSetApiKey()
+        self:onSetExtractionApiKey()
         return
     end
+
+    local self_ref = self
+
+    local function openAISettings()
+        local ai_menu
+        ai_menu = Menu:new{
+            title      = "AI Settings",
+            item_table = {
+                {
+                    text     = "Gemini Character Extraction key",
+                    callback = function() self_ref:onSetExtractionApiKey() end,
+                },
+                {
+                    text     = "Gemini Image Generation key",
+                    callback = function() self_ref:onSetApiKey() end,
+                },
+                {
+                    text_func = function()
+                        local m = G_reader_settings:readSetting("kocharacters_imagen_model") or "imagen-4.0-fast-generate-001"
+                        return "Imagen model: " .. m
+                    end,
+                    callback = function()
+                        local model_menu
+                        local items = {}
+                        for _, m in ipairs({
+                            "imagen-4.0-fast-generate-001",
+                            "imagen-4.0-generate-001",
+                            "imagen-4.0-ultra-generate-001",
+                        }) do
+                            local model = m
+                            table.insert(items, {
+                                text     = model,
+                                callback = function()
+                                    G_reader_settings:saveSetting("kocharacters_imagen_model", model)
+                                    UIManager:close(model_menu)
+                                    self_ref:showMsg("Imagen model set to:\n" .. model, 3)
+                                end,
+                            })
+                        end
+                        model_menu = Menu:new{
+                            title       = "Select Imagen Model",
+                            item_table  = items,
+                            width       = Screen:getWidth(),
+                            show_parent = self_ref.ui,
+                        }
+                        UIManager:show(model_menu)
+                    end,
+                },
+                {
+                    text     = "Edit extraction prompt",
+                    callback = function() self_ref:onEditPrompt(
+                        "Extraction Prompt", "kocharacters_extraction_prompt",
+                        GeminiClient.DEFAULT_EXTRACTION_PROMPT) end,
+                },
+                {
+                    text     = "Edit cleanup prompt",
+                    callback = function() self_ref:onEditPrompt(
+                        "Cleanup Prompt", "kocharacters_cleanup_prompt",
+                        GeminiClient.DEFAULT_CLEANUP_PROMPT) end,
+                },
+                {
+                    text     = "Edit re-analyze prompt",
+                    callback = function() self_ref:onEditPrompt(
+                        "Re-analyze Prompt", "kocharacters_reanalyze_prompt",
+                        GeminiClient.DEFAULT_REANALYZE_PROMPT) end,
+                },
+                {
+                    text     = "Edit relationship map prompt",
+                    callback = function() self_ref:onEditPrompt(
+                        "Relationship Map Prompt", "kocharacters_relationship_map_prompt",
+                        GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT) end,
+                },
+                {
+                    text     = "Edit portrait prompt",
+                    callback = function() self_ref:onEditPrompt(
+                        "Portrait Prompt", "kocharacters_portrait_prompt",
+                        DEFAULT_PORTRAIT_PROMPT) end,
+                },
+                {
+                    text     = "View book context (auto-built)",
+                    callback = function()
+                        local bid = self_ref:getBookID()
+                        if not bid then self_ref:showMsg("No book open."); return end
+                        local ctx = self_ref.db:loadBookContext(bid)
+                        if not ctx or ctx == "" then
+                            self_ref:showMsg("No book context yet.\nScan pages or chapters to build it automatically.")
+                            return
+                        end
+                        UIManager:show(ConfirmBox:new{
+                            text        = "Book context:\n\n" .. ctx .. "\n\nClear this context?",
+                            ok_text     = "Clear",
+                            cancel_text = "Keep",
+                            ok_callback = function()
+                                os.remove(self_ref.db:bookContextPath(bid))
+                                self_ref:showMsg("Book context cleared.", 2)
+                            end,
+                        })
+                    end,
+                },
+            },
+            width       = Screen:getWidth(),
+            show_parent = self_ref.ui,
+        }
+        UIManager:show(ai_menu)
+    end
+
     UIManager:show(Menu:new{
         title      = "KoCharacters Settings",
         item_table = {
             {
-                text     = "Gemini API key",
-                callback = function() self:onSetApiKey() end,
+                text     = "AI Settings",
+                callback = function() openAISettings() end,
             },
             {
                 text = "Auto-extract on page turn: "
@@ -2288,38 +2728,6 @@ function KoCharacters:onOpenSettings()
                 callback = function() self:onViewUsage() end,
             },
             {
-                text     = "Edit extraction prompt",
-                callback = function() self:onEditPrompt(
-                    "Extraction Prompt",
-                    "kocharacters_extraction_prompt",
-                    GeminiClient.DEFAULT_EXTRACTION_PROMPT
-                ) end,
-            },
-            {
-                text     = "Edit cleanup prompt",
-                callback = function() self:onEditPrompt(
-                    "Cleanup Prompt",
-                    "kocharacters_cleanup_prompt",
-                    GeminiClient.DEFAULT_CLEANUP_PROMPT
-                ) end,
-            },
-            {
-                text     = "Edit re-analyze prompt",
-                callback = function() self:onEditPrompt(
-                    "Re-analyze Prompt",
-                    "kocharacters_reanalyze_prompt",
-                    GeminiClient.DEFAULT_REANALYZE_PROMPT
-                ) end,
-            },
-            {
-                text     = "Edit relationship map prompt",
-                callback = function() self:onEditPrompt(
-                    "Relationship Map Prompt",
-                    "kocharacters_relationship_map_prompt",
-                    GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
-                ) end,
-            },
-            {
                 text     = "Clear character database",
                 callback = function() self:onClearDatabase() end,
             },
@@ -2334,6 +2742,7 @@ function KoCharacters:onOpenSettings()
                             G_reader_settings:delSetting("kocharacters_cleanup_prompt")
                             G_reader_settings:delSetting("kocharacters_reanalyze_prompt")
                             G_reader_settings:delSetting("kocharacters_relationship_map_prompt")
+                            G_reader_settings:delSetting("kocharacters_portrait_prompt")
                             self:showMsg("Prompts reset to defaults.", 2)
                         end,
                     })
@@ -2345,29 +2754,75 @@ function KoCharacters:onOpenSettings()
     })
 end
 
-function KoCharacters:onSetApiKey()
-    local current_key = self:getApiKey()
+function KoCharacters:onSetExtractionApiKey()
+    local current_key = G_reader_settings:readSetting("kocharacters_extraction_api_key") or ""
     local dialog
     dialog = InputDialog:new{
-        title       = "Gemini API Key",
+        title       = "Gemini Character Extraction Key",
         input       = current_key,
         input_hint  = "AIza...",
-        description = "Enter your Google Gemini API key.\nGet a free key at aistudio.google.com",
+        description = "API key used for character extraction, cleanup,\nand relationship mapping.\nGet a free key at aistudio.google.com",
+        buttons = {{
+            { text = "Cancel", callback = function() UIManager:close(dialog) end },
+            {
+                text = "Save", is_enter_default = true,
+                callback = function()
+                    local key = (dialog:getInputText() or ""):match("^%s*(.-)%s*$") or ""
+                    G_reader_settings:saveSetting("kocharacters_extraction_api_key", key)
+                    UIManager:close(dialog)
+                    self:showMsg("Character extraction key saved.", 2)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function KoCharacters:onSetApiKey()
+    local current_key = G_reader_settings:readSetting("kocharacters_imagen_api_key") or ""
+    local dialog
+    dialog = InputDialog:new{
+        title       = "Gemini Image Generation Key",
+        input       = current_key,
+        input_hint  = "AIza...",
+        description = "API key used for portrait generation (Imagen).\nGet a key at aistudio.google.com",
+        buttons = {{
+            { text = "Cancel", callback = function() UIManager:close(dialog) end },
+            {
+                text = "Save", is_enter_default = true,
+                callback = function()
+                    local key = (dialog:getInputText() or ""):match("^%s*(.-)%s*$") or ""
+                    G_reader_settings:saveSetting("kocharacters_imagen_api_key", key)
+                    UIManager:close(dialog)
+                    self:showMsg("Image generation key saved.", 2)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function KoCharacters:onSetHFToken()
+    local current = G_reader_settings:readSetting("kocharacters_hf_token") or ""
+    local dialog
+    dialog = InputDialog:new{
+        title       = "HuggingFace Token",
+        input       = current,
+        input_hint  = "hf_...",
+        description = "Enter your HuggingFace access token.\nFree at huggingface.co — used for portrait generation.",
         buttons = {
             {
-                {
-                    text     = "Cancel",
-                    callback = function() UIManager:close(dialog) end,
-                },
+                { text = "Cancel", callback = function() UIManager:close(dialog) end },
                 {
                     text             = "Save",
                     is_enter_default = true,
                     callback         = function()
-                        local key = dialog:getInputText() or ""
-                        key = key:match("^%s*(.-)%s*$") or ""
-                        G_reader_settings:saveSetting("kocharacters_api_key", key)
+                        local token = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
+                        G_reader_settings:saveSetting("kocharacters_hf_token", token)
                         UIManager:close(dialog)
-                        self:showMsg("API key saved.", 2)
+                        self:showMsg("HuggingFace token saved.", 2)
                     end,
                 },
             },
@@ -2385,7 +2840,7 @@ function KoCharacters:onEditPrompt(title, setting_key, default_prompt)
     dialog = InputDialog:new{
         title       = title,
         input       = current,
-        description = label .. "\nExtraction: {{existing}} {{skip}} {{text}}\nRe-analyze/Cleanup: {{character}} {{text}}",
+        description = label .. "\nExtraction: {{existing}} {{skip}} {{text}}\nRe-analyze/Cleanup: {{character}} {{text}}\nPortrait: {{name}} {{role}} {{appearance}} {{personality}} {{relationships}} {{context}}",
         allow_newline = true,
         buttons = {
             {
@@ -2823,10 +3278,75 @@ function KoCharacters:onWordCharacterLookup(word)
             buttons_table = {
                 {
                     {
+                        text     = "Generate Portrait",
+                        callback = function()
+                            UIManager:close(viewer)
+                            self_ref:onGeneratePortrait(book_id, char)
+                        end,
+                    },
+                    {
+                        text     = "Merge into...",
+                        callback = function()
+                            UIManager:close(viewer)
+                            local others = {}
+                            for _, other in ipairs(self_ref.db:load(book_id)) do
+                                if other.name ~= char.name then
+                                    local other_name = other.name
+                                    table.insert(others, {
+                                        text     = other_name,
+                                        callback = function()
+                                            UIManager:show(ConfirmBox:new{
+                                                text        = 'Merge "' .. char.name .. '" into "' .. other_name .. '"?\n'
+                                                              .. 'Their info will be combined and "' .. char.name .. '" removed.',
+                                                ok_text     = "Merge",
+                                                ok_callback = function()
+                                                    self_ref.db:mergeCharacters(book_id, char.name, other_name)
+                                                    self_ref:showMsg('"' .. char.name .. '" merged into "' .. other_name .. '".', 3)
+                                                end,
+                                            })
+                                        end,
+                                    })
+                                end
+                            end
+                            local ok_m, Menu2 = pcall(require, "ui/widget/menu")
+                            if ok_m and Menu2 then
+                                UIManager:show(Menu2:new{
+                                    title       = 'Merge "' .. char.name .. '" into...',
+                                    item_table  = others,
+                                    width       = Screen:getWidth(),
+                                    show_parent = self_ref.ui,
+                                })
+                            end
+                        end,
+                    },
+                    {
+                        text     = "Delete Character",
+                        callback = function()
+                            UIManager:close(viewer)
+                            UIManager:show(ConfirmBox:new{
+                                text        = 'Delete "' .. char.name .. '" from the character list?',
+                                ok_text     = "Delete",
+                                ok_callback = function()
+                                    self_ref.db:deleteCharacter(book_id, char.name)
+                                    self_ref:showMsg(char.name .. " deleted.", 2)
+                                end,
+                            })
+                        end,
+                    },
+                },
+                {
+                    {
                         text     = "Re-analyze",
                         callback = function()
                             UIManager:close(viewer)
                             self_ref:onReanalyzeCharacter(book_id, char)
+                        end,
+                    },
+                    {
+                        text     = "Clean up",
+                        callback = function()
+                            UIManager:close(viewer)
+                            self_ref:onCleanCharacter(book_id, char.name)
                         end,
                     },
                     {
@@ -2835,10 +3355,6 @@ function KoCharacters:onWordCharacterLookup(word)
                             UIManager:close(viewer)
                             self_ref:onEditCharacter(book_id, char)
                         end,
-                    },
-                    {
-                        text     = "Close",
-                        callback = function() UIManager:close(viewer) end,
                     },
                 },
             },

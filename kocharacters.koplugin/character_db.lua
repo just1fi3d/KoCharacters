@@ -19,12 +19,16 @@ end
 local CharacterDB = {}
 CharacterDB.__index = CharacterDB
 
--- Return the path to the JSON file for a given book MD5
-function CharacterDB:dbPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/kocharacters"
-    -- Ensure directory exists using KOReader's util
+-- Return (and create) the per-book directory
+function CharacterDB:bookDir(book_md5)
+    local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_md5
     util.makePath(dir)
-    return dir .. "/" .. book_md5 .. ".json"
+    return dir
+end
+
+-- Return the path to the JSON file for a given book
+function CharacterDB:dbPath(book_md5)
+    return self:bookDir(book_md5) .. "/characters.json"
 end
 
 -- Load the character list for a book (returns empty table if none saved)
@@ -251,9 +255,7 @@ end
 -- Scanned pages tracking
 -- ---------------------------------------------------------------------------
 function CharacterDB:scannedPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/kocharacters"
-    util.makePath(dir)
-    return dir .. "/" .. book_md5 .. "_scanned.json"
+    return self:bookDir(book_md5) .. "/scanned.json"
 end
 
 -- Returns a set (table keyed by page number) of already-scanned pages
@@ -301,9 +303,7 @@ end
 -- Pending cleanup flag
 -- ---------------------------------------------------------------------------
 function CharacterDB:pendingCleanupPath(book_md5)
-    local dir = DataStorage:getDataDir() .. "/kocharacters"
-    util.makePath(dir)
-    return dir .. "/" .. book_md5 .. "_pending_cleanup"
+    return self:bookDir(book_md5) .. "/pending_cleanup"
 end
 
 function CharacterDB:markPendingCleanup(book_md5)
@@ -319,6 +319,28 @@ end
 
 function CharacterDB:clearPendingCleanup(book_md5)
     os.remove(self:pendingCleanupPath(book_md5))
+end
+
+-- ---------------------------------------------------------------------------
+-- Book context (auto-built genre/era/setting summary)
+-- ---------------------------------------------------------------------------
+function CharacterDB:bookContextPath(book_md5)
+    return self:bookDir(book_md5) .. "/book_context.txt"
+end
+
+function CharacterDB:loadBookContext(book_md5)
+    local path = self:bookContextPath(book_md5)
+    local f = io.open(path, "r")
+    if not f then return "" end
+    local content = f:read("*a")
+    f:close()
+    return content or ""
+end
+
+function CharacterDB:saveBookContext(book_md5, context)
+    local path = self:bookContextPath(book_md5)
+    local f = io.open(path, "w")
+    if f then f:write(context); f:close() end
 end
 
 return CharacterDB
