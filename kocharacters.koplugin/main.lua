@@ -7,6 +7,7 @@ local InfoMessage     = require("ui/widget/infomessage")
 local InputDialog     = require("ui/widget/inputdialog")
 local TextViewer      = require("ui/widget/textviewer")
 local ConfirmBox      = require("ui/widget/confirmbox")
+local Menu            = require("ui/widget/menu")
 local Screen          = require("device").screen
 local logger          = require("logger")
 local _               = require("gettext")
@@ -14,6 +15,10 @@ local _               = require("gettext")
 local Dispatcher   = require("dispatcher")
 local GeminiClient = require("gemini_client")
 local CharacterDB  = require("character_db")
+
+local function portraitSafeName(name)
+    return (name:gsub("[^%w%-]", "_"):lower())
+end
 
 -- ---------------------------------------------------------------------------
 -- Duplicate detection helpers
@@ -197,7 +202,76 @@ function KoCharacters:init()
         end)
     end
 
+    self:_runOnTimeMigrations()
     logger.info("KoCharacters: plugin initialised")
+end
+
+-- One-time migration: assign IDs to existing characters and rename portrait files to <id>.png
+function KoCharacters:_runOnTimeMigrations()
+    if G_reader_settings:readSetting("kocharacters_id_migration_v3") then return end
+
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_lfs then ok_lfs, lfs = pcall(require, "lfs") end
+    if not ok_lfs or not lfs then
+        G_reader_settings:saveSetting("kocharacters_id_migration_v3", true)
+        return
+    end
+
+    local DataStorage = require("datastorage")
+    local base_dir    = DataStorage:getDataDir() .. "/kocharacters"
+    local attr        = lfs.attributes(base_dir)
+    if not attr or attr.mode ~= "directory" then
+        G_reader_settings:saveSetting("kocharacters_id_migration_v3", true)
+        return
+    end
+
+    local total_chars, total_portraits = 0, 0
+
+    for entry in lfs.dir(base_dir) do
+        if entry ~= "." and entry ~= ".." then
+            local book_dir = base_dir .. "/" .. entry
+            local ba = lfs.attributes(book_dir)
+            if ba and ba.mode == "directory" then
+                -- load() backfills IDs for any character missing one and saves automatically
+                local chars = self.db:load(entry)
+                total_chars = total_chars + #chars
+
+                -- Rename portrait files from name-based to id-based
+                local portraits_dir = book_dir .. "/portraits"
+                local changed = false
+                for _, c in ipairs(chars) do
+                    if c.id and c.id ~= "" then
+                        local expected = c.id .. ".png"
+                        -- Current portrait_file already correct
+                        if c.portrait_file == expected then
+                            -- nothing to do
+                        else
+                            -- Determine the old filename: stored portrait_file or name-based fallback
+                            local old_filename = (c.portrait_file and c.portrait_file ~= "")
+                                and c.portrait_file
+                                or (portraitSafeName(c.name or "") .. ".png")
+                            local old_path = portraits_dir .. "/" .. old_filename
+                            local fcheck = io.open(old_path, "r")
+                            if fcheck then
+                                fcheck:close()
+                                os.rename(old_path, portraits_dir .. "/" .. expected)
+                                c.portrait_file = expected
+                                changed = true
+                                total_portraits = total_portraits + 1
+                            end
+                        end
+                    end
+                end
+                if changed then self.db:save(entry, chars) end
+            end
+        end
+    end
+
+    G_reader_settings:saveSetting("kocharacters_id_migration_v3", true)
+    logger.info(string.format(
+        "KoCharacters: migration complete — %d character(s) assigned IDs, %d portrait(s) renamed",
+        total_chars, total_portraits
+    ))
 end
 
 function KoCharacters:_getChapterStartForPage(pageno)
@@ -251,6 +325,41 @@ function KoCharacters:onPosUpdate()
     if pageno then self:_onPageChanged(pageno) end
 end
 
+function KoCharacters:onReaderReady()
+    local book_id = self:getBookID()
+    if not book_id then return end
+
+    -- Only prompt once per book
+    local greeted = G_reader_settings:readSetting("kocharacters_greeted_books") or {}
+    if greeted[book_id] then return end
+    greeted[book_id] = true
+    G_reader_settings:saveSetting("kocharacters_greeted_books", greeted)
+
+    local auto_on = G_reader_settings:readSetting("kocharacters_auto_extract") and true or false
+    local msg, ok_text, cancel_text
+    if auto_on then
+        msg         = "KoCharacters: auto-extract is ON.\nKeep it enabled for this book?"
+        ok_text     = "Keep ON"
+        cancel_text = "Turn OFF"
+    else
+        msg         = "KoCharacters: auto-extract is OFF.\nEnable it for this book?"
+        ok_text     = "Enable"
+        cancel_text = "Keep OFF"
+    end
+
+    UIManager:show(ConfirmBox:new{
+        text            = msg,
+        ok_text         = ok_text,
+        cancel_text     = cancel_text,
+        ok_callback     = function()
+            G_reader_settings:saveSetting("kocharacters_auto_extract", true)
+        end,
+        cancel_callback = function()
+            G_reader_settings:saveSetting("kocharacters_auto_extract", false)
+        end,
+    })
+end
+
 function KoCharacters:autoExtract(page_num)
     if self._auto_extracting then return end
     local api_key = self:getApiKey()
@@ -267,9 +376,6 @@ function KoCharacters:autoExtract(page_num)
     end
 
     self._auto_extracting = true
-    -- Mark page as scanned now so back/forward navigation won't re-trigger
-    if page_num then self.db:markPageScanned(book_id, page_num) end
-
     self:showScanIndicator()
 
     local existing   = self.db:load(book_id)
@@ -299,7 +405,24 @@ function KoCharacters:autoExtract(page_num)
         self.db:saveBookContext(book_id, book_context)
     end
 
-    if not ok or api_err or not characters or #characters == 0 then
+    if not ok or api_err then
+        self:hideScanIndicator()
+        self._auto_extracting = false
+        local is_network = not ok or (type(api_err) == "string" and api_err:find("Network error"))
+        if is_network then
+            -- Offline: save page to retry later
+            if page_num then self.db:markPagePending(book_id, page_num) end
+        else
+            -- Other API error (quota, bad response): don't retry
+            if page_num then self.db:markPageScanned(book_id, page_num) end
+        end
+        return
+    end
+
+    -- Success (even if no characters found — page was readable)
+    if page_num then self.db:markPageScanned(book_id, page_num) end
+
+    if not characters or #characters == 0 then
         self:hideScanIndicator()
         self._auto_extracting = false
         return
@@ -311,7 +434,132 @@ function KoCharacters:autoExtract(page_num)
         self:hideScanIndicator()
         self._auto_extracting = false
         self:showExtractedCount(#characters)
+        self:_checkAndPromptPendingPages(book_id)
     end, cur_page, true)
+end
+
+function KoCharacters:_checkAndPromptPendingPages(book_id)
+    if self._pending_notified then return end
+    if not self.db:hasPendingPages(book_id) then return end
+    self._pending_notified = true
+    local pages = self.db:loadPendingPages(book_id)
+    UIManager:show(ConfirmBox:new{
+        text    = #pages .. " page(s) couldn't be scanned while offline.\nScan them now?",
+        ok_text = "Scan",
+        ok_callback = function() self:onScanPendingPages(book_id) end,
+    })
+end
+
+function KoCharacters:onScanPendingPages(book_id)
+    book_id = book_id or self:getBookID()
+    if not book_id then return end
+
+    local pages = self.db:loadPendingPages(book_id)
+    if #pages == 0 then self:showMsg("No offline-pending pages."); return end
+    table.sort(pages)
+
+    local client      = GeminiClient:new(self:getApiKey())
+    local scanned_ok  = {}
+    local total_found = 0
+    local total       = #pages
+    local self_ref    = self
+    local progress_msg
+
+    local function finish(stopped_early)
+        if progress_msg then UIManager:close(progress_msg); progress_msg = nil end
+        self_ref.db:removePendingPages(book_id, scanned_ok)
+        for _, p in ipairs(scanned_ok) do self_ref.db:markPageScanned(book_id, p) end
+        local remaining = self_ref.db:loadPendingPages(book_id)
+        local msg = "Offline scan complete.\n"
+            .. #scanned_ok .. "/" .. total .. " pages scanned.\n"
+            .. "Characters found/updated: " .. total_found
+        if #remaining > 0 then
+            msg = msg .. "\n" .. #remaining .. " page(s) still pending."
+        end
+        if stopped_early then
+            msg = "Network error during scan.\n"
+                .. #scanned_ok .. " page(s) scanned before failure.\n"
+                .. (total - #scanned_ok) .. " page(s) still pending."
+        end
+        self_ref:showMsg(msg, 6)
+    end
+
+    local function processPage(idx)
+        if idx > total then finish(false); return end
+
+        local page_num = pages[idx]
+        if progress_msg then UIManager:close(progress_msg) end
+        progress_msg = InfoMessage:new{
+            text = "Scanning offline pages...\n" .. idx .. "/" .. total
+                   .. " (page " .. page_num .. ")",
+        }
+        UIManager:show(progress_msg)
+        UIManager:forceRePaint()
+
+        local page_text = self_ref:getCurrentPageText(page_num)
+        if not page_text or #page_text < 20 then
+            table.insert(scanned_ok, page_num)
+            UIManager:scheduleIn(0.1, function() processPage(idx + 1) end)
+            return
+        end
+
+        local all_chars  = self_ref.db:load(book_id)
+        local page_lower = page_text:lower()
+        local chars_in_text, skip_names = {}, {}
+        for _, c in ipairs(all_chars) do
+            local found = c.name and page_lower:find(c.name:lower(), 1, true)
+            if not found and c.aliases then
+                for _, alias in ipairs(c.aliases) do
+                    if alias ~= "" and page_lower:find(alias:lower(), 1, true) then found = true; break end
+                end
+            end
+            if found then table.insert(chars_in_text, c)
+            else table.insert(skip_names, c.name) end
+        end
+
+        local characters, api_err, usage, book_context
+        local ok, call_err = pcall(function()
+            characters, api_err, usage, book_context = client:extractCharacters(
+                page_text, skip_names, chars_in_text, self_ref:getExtractionPrompt(),
+                self_ref.db:loadBookContext(book_id))
+        end)
+        if ok and not api_err then self_ref:recordUsage(usage) end
+        if ok and book_context and book_context ~= "" then
+            self_ref.db:saveBookContext(book_id, book_context)
+        end
+
+        local is_network = not ok or (type(api_err) == "string" and api_err:find("Network error"))
+        if is_network then
+            finish(true)
+            return
+        end
+
+        if api_err then
+            logger.warn("KoCharacters: pending scan p" .. page_num .. ": " .. tostring(api_err))
+            table.insert(scanned_ok, page_num)
+        elseif characters and #characters > 0 then
+            local ex_chars = self_ref.db:load(book_id)
+            local ic = findIncomingConflicts(ex_chars, characters)
+            local conflict_set = {}
+            for _, c in ipairs(ic) do
+                conflict_set[(c.new_char.name or ""):lower()] = true
+                self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, page_num)
+            end
+            local remaining_chars = {}
+            for _, c in ipairs(characters) do
+                if not conflict_set[(c.name or ""):lower()] then table.insert(remaining_chars, c) end
+            end
+            if #remaining_chars > 0 then self_ref.db:merge(book_id, remaining_chars, page_num) end
+            total_found = total_found + #characters
+            table.insert(scanned_ok, page_num)
+        else
+            table.insert(scanned_ok, page_num)
+        end
+
+        UIManager:scheduleIn(4, function() processPage(idx + 1) end)
+    end
+
+    processPage(1)
 end
 
 function KoCharacters:addToMainMenu(menu_items)
@@ -373,6 +621,10 @@ function KoCharacters:addToMainMenu(menu_items)
                             {
                                 text     = "Export as ZIP (HTML + portraits)",
                                 callback = function() UIManager:close(export_menu); self_ref:onExportZip() end,
+                            },
+                            {
+                                text     = "Upload to server",
+                                callback = function() UIManager:close(export_menu); self_ref:onUploadToServer() end,
                             },
                         },
                         width       = Screen:getWidth(),
@@ -730,7 +982,7 @@ function KoCharacters:getRelationshipMapPrompt()
         or GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
 end
 
-local DEFAULT_PORTRAIT_PROMPT = [[Oil painting portrait of a fictional {{role}} character, occupation: {{occupation}}. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Appearance: {{appearance}} Personality expressed through posture and expression: {{personality}} Book setting: {{book_context}} Use historically accurate clothing, hairstyle, and setting consistent with the character's era, occupation, and the book setting. Paint in the style of a master portrait painter from that same era — matching the composition, lighting, brushwork, color palette, and aesthetic conventions of period-authentic portraiture (e.g. Renaissance, Baroque, Victorian, etc. as appropriate). Dark or neutral background, formal pose, fine detail in fabric and face.]]
+local DEFAULT_PORTRAIT_PROMPT = [[Oil painting portrait of a fictional {{role}} character. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Appearance: {{appearance}} Personality expressed through posture and expression: {{personality}} Occupation: {{occupation}} — the character's clothing, accessories, tools, and background environment must authentically reflect this occupation and social standing (e.g. a blacksmith wears a leather apron near a forge, a physician carries instruments in a study, a soldier wears armour or uniform). Book setting: {{book_context}} Use historically accurate clothing, hairstyle, and background consistent with the character's era, occupation, and the book setting. Paint in the style of a master portrait painter from that same era — matching the composition, lighting, brushwork, color palette, and aesthetic conventions of period-authentic portraiture (e.g. Renaissance, Baroque, Victorian, etc. as appropriate). Fine detail in fabric, face, and any occupation-relevant objects or surroundings.]]
 
 function KoCharacters:getPortraitPrompt()
     return G_reader_settings:readSetting("kocharacters_portrait_prompt")
@@ -1982,15 +2234,12 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
                                             })
                                         end
                                     end
-                                    local ok_m, Menu2 = pcall(require, "ui/widget/menu")
-                                    if ok_m and Menu2 then
-                                        UIManager:show(Menu2:new{
-                                            title       = 'Merge "' .. name .. '" into...',
-                                            item_table  = others,
-                                            width       = Screen:getWidth(),
-                                            show_parent = self_ref.ui,
-                                        })
-                                    end
+                                    UIManager:show(Menu:new{
+                                        title       = 'Merge "' .. name .. '" into...',
+                                        item_table  = others,
+                                        width       = Screen:getWidth(),
+                                        show_parent = self_ref.ui,
+                                    })
                                 end,
                             },
                             {
@@ -2049,17 +2298,15 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
 end
 
 -- Return a safe filename component for a character name
-local function portraitSafeName(name)
-    return (name:gsub("[^%w%-]", "_"):lower())
-end
-
 -- Return the full filesystem path to a character's portrait PNG
-function KoCharacters:portraitPath(book_id, char_name)
+function KoCharacters:portraitPath(book_id, char)
     local DataStorage = require("datastorage")
     local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
     local util = require("util")
     util.makePath(dir)
-    return dir .. "/" .. portraitSafeName(char_name) .. ".png"
+    local filename = (char.id and char.id ~= "") and (char.id .. ".png")
+                     or (portraitSafeName(char.name or "unknown") .. ".png")
+    return dir .. "/" .. filename
 end
 
 -- Generate and save a portrait using Imagen
@@ -2092,7 +2339,7 @@ function KoCharacters:generatePortraitForChar(book_id, char)
         "book_context", book_context)
 
     local api_key   = self:getImagenApiKey()
-    local out_path  = self:portraitPath(book_id, char.name)
+    local out_path  = self:portraitPath(book_id, char)
     local req_file  = portraits_dir .. "/.imagen_req.json"
     local resp_file = portraits_dir .. "/.imagen_resp.json"
 
@@ -2135,7 +2382,8 @@ function KoCharacters:generatePortraitForChar(book_id, char)
     os.remove(tmp_b64)
     if ret ~= 0 then return "Failed to decode portrait image." end
 
-    local portrait_filename = portraitSafeName(char.name) .. ".png"
+    local portrait_filename = (char.id and char.id ~= "") and (char.id .. ".png")
+                              or (portraitSafeName(char.name) .. ".png")
     char.portrait_file = portrait_filename
     self.db:updateCharacter(book_id, char.name, char)
     self:recordUsage({ images = 1 })
@@ -2455,6 +2703,253 @@ function KoCharacters:onExportZip()
     self:showMsg("ZIP saved to:\n" .. zip_path, 6)
 end
 
+function KoCharacters:onUploadToServer()
+    local book_id = self:getBookID()
+    if not book_id then
+        self:showMsg("Cannot identify book.")
+        return
+    end
+    local characters = self.db:load(book_id)
+    if #characters == 0 then
+        self:showMsg("No characters to upload yet.")
+        return
+    end
+
+    local endpoint = G_reader_settings:readSetting("kocharacters_upload_endpoint") or ""
+    local api_key  = G_reader_settings:readSetting("kocharacters_upload_api_key") or ""
+    if endpoint == "" then
+        self:showMsg("No upload endpoint configured.\nGo to Settings → Export settings.")
+        return
+    end
+
+    local msg = InfoMessage:new{ text = "Preparing upload…" }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+
+    local DataStorage = require("datastorage")
+    local json        = require("dkjson")
+    local util        = require("util")
+    local base_dir    = DataStorage:getDataDir() .. "/kocharacters/" .. book_id
+    local archive_name = (book_id:match("^(.-)_%d+$") or book_id) .. ".tar.gz"
+    local archive_path = base_dir .. "/" .. archive_name
+
+    local function fileExists(path)
+        local f = io.open(path, "r")
+        if f then f:close(); return true end
+        return false
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Step 1: Build book_meta.json from doc_settings
+    -- -----------------------------------------------------------------------
+    local meta = {}
+    if self.ui and self.ui.doc_settings then
+        local ok, props = pcall(function() return self.ui.doc_settings:readSetting("doc_props") end)
+        if ok and props then
+            meta.title        = props.title or ""
+            meta.authors      = props.authors or ""
+            meta.series       = props.series or ""
+            meta.series_index = props.series_index
+            meta.language     = props.language or ""
+            -- Strip HTML tags from description
+            if props.description then
+                meta.description = props.description:gsub("<[^>]+>", ""):gsub("%s+", " "):match("^%s*(.-)%s*$")
+            end
+            -- Parse identifiers string into a table
+            if props.identifiers then
+                local ids = {}
+                for line in (props.identifiers .. "\n"):gmatch("([^\n]+)\n") do
+                    local k, v = line:match("^([^:]+):(.+)$")
+                    if k and v then ids[k:lower()] = v end
+                end
+                if next(ids) then meta.identifiers = ids end
+            end
+            -- Keywords into array
+            if props.keywords then
+                local kw = {}
+                for line in (props.keywords .. "\n"):gmatch("([^\n]+)\n") do
+                    local w = line:match("^%s*(.-)%s*$")
+                    if w ~= "" then table.insert(kw, w) end
+                end
+                if #kw > 0 then meta.keywords = kw end
+            end
+        end
+        local ok2, pages = pcall(function() return self.ui.doc_settings:readSetting("doc_pages") end)
+        if ok2 and pages then meta.total_pages = pages end
+        local ok3, pct = pcall(function() return self.ui.doc_settings:readSetting("percent_finished") end)
+        if ok3 and pct then meta.percent_finished = math.floor(pct * 1000 + 0.5) / 10 end
+        local ok4, summary = pcall(function() return self.ui.doc_settings:readSetting("summary") end)
+        if ok4 and summary then
+            meta.reading_status = summary.status
+            meta.last_read      = summary.modified
+        end
+        local ok5, stats = pcall(function() return self.ui.doc_settings:readSetting("stats") end)
+        if ok5 and stats then
+            meta.highlights = stats.highlights or 0
+            meta.notes      = stats.notes or 0
+        end
+    end
+    meta.book_context = self.db:loadBookContext(book_id)
+
+    -- Partial MD5 used by KOReader progress sync (KOSync)
+    if self.ui then
+        local ok_md5, md5val = pcall(function()
+            return self.ui.doc_settings and self.ui.doc_settings:readSetting("partial_md5_checksum")
+        end)
+        if ok_md5 and md5val and md5val ~= "" then
+            meta.partial_md5 = md5val
+        else
+            local ok_fd, digest = pcall(function()
+                return self.ui.document and self.ui.document:fastDigest()
+            end)
+            if ok_fd and digest and digest ~= "" then meta.partial_md5 = digest end
+        end
+    end
+
+    local meta_path = base_dir .. "/book_meta.json"
+
+    -- -----------------------------------------------------------------------
+    -- Step 2: Extract cover image from epub (meta.cover set here, then written)
+    -- -----------------------------------------------------------------------
+    local cover_path = base_dir .. "/cover.jpg"
+    os.remove(cover_path)
+    local epub_path = (self.ui and self.ui.document and self.ui.document.file) or ""
+    if epub_path ~= "" then
+        -- Find cover image path in OPF manifest
+        local opf_raw = ""
+        local h = io.popen(string.format('unzip -p "%s" "*.opf" 2>/dev/null', epub_path))
+        if h then opf_raw = h:read("*a") or ""; h:close() end
+
+        -- Try properties="cover-image" first, then <meta name="cover">
+        local cover_item = opf_raw:match('<item[^>]+properties="cover%-image"[^>]+href="([^"]+)"')
+                        or opf_raw:match('<item[^>]+href="([^"]+)"[^>]+properties="cover%-image"')
+        if not cover_item then
+            local cover_id = opf_raw:match('<meta[^>]+name="cover"[^>]+content="([^"]+)"')
+                          or opf_raw:match('<meta[^>]+content="([^"]+)"[^>]+name="cover"')
+            if cover_id then
+                -- Escape Lua pattern magic chars in cover_id (e.g. "-" is a pattern quantifier)
+                local cover_id_pat = cover_id:gsub("([%(%)%.%%%+%-%*%?%[%^%$])", "%%%1")
+                cover_item = opf_raw:match('<item[^>]+id="' .. cover_id_pat .. '"[^>]+href="([^"]+)"')
+                          or opf_raw:match('<item[^>]+href="([^"]+)"[^>]+id="' .. cover_id_pat .. '"')
+            end
+        end
+
+        -- If no OPF match, pick the largest jpg in the epub as a fallback
+        if not cover_item then
+            local list_h = io.popen(string.format('unzip -l "%s" 2>/dev/null | grep -i "\\.jpg"', epub_path))
+            if list_h then
+                local best_size, best_name = 0, nil
+                for line in list_h:lines() do
+                    -- Format: "  <size>  <date> <time>   <filename>"
+                    -- Capture size and the trailing filename (no spaces in between at end)
+                    local size, name = line:match("^%s*(%d+)%s+%S+%s+%S+%s+(.+%.jpg)%s*$")
+                    size = tonumber(size) or 0
+                    if size > best_size then best_size = size; best_name = name end
+                end
+                list_h:close()
+                if best_name then cover_item = best_name end
+            end
+        end
+
+        if cover_item then
+            -- Try to read the cover image via io.popen (avoids shell redirection issues)
+            local function extractCover(path_in_zip)
+                local ph = io.popen(string.format(
+                    'unzip -p "%s" "%s" 2>/dev/null', epub_path, path_in_zip), "r")
+                if not ph then return false end
+                local data = ph:read("*a"); ph:close()
+                if not data or #data < 4 then return false end
+                -- Validate magic bytes before writing
+                local b1, b2, b3 = data:byte(1), data:byte(2), data:byte(3)
+                local is_jpeg = (b1 == 0xFF and b2 == 0xD8)
+                local is_png  = (b1 == 0x89 and b2 == 0x50 and b3 == 0x4E)
+                if not is_jpeg and not is_png then return false end
+                local wf = io.open(cover_path, "wb")
+                if not wf then return false end
+                wf:write(data); wf:close()
+                return true
+            end
+
+            local ok_cover = extractCover(cover_item)
+            logger.info("KoCharacters: upload cover_item=" .. tostring(cover_item) .. " ok=" .. tostring(ok_cover))
+            -- If cover_item was relative (no directory component), try with OEBPS/ prefix
+            if not ok_cover and not cover_item:find("/") then
+                ok_cover = extractCover("OEBPS/" .. cover_item)
+                logger.info("KoCharacters: upload cover OEBPS fallback ok=" .. tostring(ok_cover))
+            end
+            if ok_cover then meta.cover = "cover.jpg" end
+        else
+            logger.info("KoCharacters: upload cover_item not found in OPF")
+        end
+    end
+
+    local mf = io.open(meta_path, "w")
+    if mf then mf:write(json.encode(meta, { indent = true })); mf:close() end
+
+    -- -----------------------------------------------------------------------
+    -- Step 3: Build tar.gz with all files
+    -- -----------------------------------------------------------------------
+    os.remove(archive_path)
+    local files = '"characters.json" "book_meta.json"'
+    if fileExists(cover_path)                             then files = files .. ' "cover.jpg"' end
+    if fileExists(base_dir .. "/portraits")               then files = files .. ' "portraits"' end
+    logger.info("KoCharacters: upload tar files=" .. files)
+
+    os.execute(string.format('cd "%s" && tar -czf "%s" %s 2>/dev/null', base_dir, archive_name, files))
+    if not fileExists(archive_path) then
+        os.execute(string.format('cd "%s" && tar -czf "%s" "characters.json" "book_meta.json" 2>/dev/null', base_dir, archive_name))
+    end
+
+    -- Clean up temp files
+    os.remove(meta_path)
+    os.remove(cover_path)
+
+    if not fileExists(archive_path) then
+        UIManager:close(msg)
+        self:showMsg("Failed to create upload archive.", 5)
+        return
+    end
+
+    -- Upload via curl
+    UIManager:close(msg)
+    msg = InfoMessage:new{ text = "Uploading to server…" }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+
+    local code_file = base_dir .. "/.curl_code"
+    local curl_cmd
+    if api_key ~= "" then
+        curl_cmd = string.format(
+            'curl -s -k --tlsv1.2 --ciphers DEFAULT -o /dev/null -w "%%{http_code}" --max-time 60 -F "file=@%s" -H "X-Api-Key: %s" "%s" > "%s"',
+            archive_path, api_key, endpoint, code_file
+        )
+    else
+        curl_cmd = string.format(
+            'curl -s -k --tlsv1.2 --ciphers DEFAULT -o /dev/null -w "%%{http_code}" --max-time 60 -F "file=@%s" "%s" > "%s"',
+            archive_path, endpoint, code_file
+        )
+    end
+
+    os.execute(curl_cmd)
+    os.remove(archive_path)
+
+    local http_code = "0"
+    local fc = io.open(code_file, "r")
+    if fc then http_code = fc:read("*a") or "0"; fc:close() end
+    os.remove(code_file)
+
+    UIManager:close(msg)
+
+    local code = tonumber(http_code:match("%d+") or "0") or 0
+    if code >= 200 and code < 300 then
+        self:showMsg("Upload successful. (" .. tostring(code) .. ")", 4)
+    elseif code == 0 then
+        self:showMsg("Upload failed: no response.\nCheck the endpoint URL and network.", 6)
+    else
+        self:showMsg("Upload failed: HTTP " .. tostring(code) .. ".\nCheck endpoint and API key.", 6)
+    end
+end
+
 function KoCharacters:onCleanupAllCharacters()
     local book_id = self:getBookID()
     if not book_id then return end
@@ -2540,12 +3035,6 @@ function KoCharacters:onClearDatabase()
 end
 
 function KoCharacters:onOpenSettings()
-    local ok, Menu = pcall(require, "ui/widget/menu")
-    if not ok then
-        self:onSetExtractionApiKey()
-        return
-    end
-
     local self_ref = self
 
     local function openAISettings()
@@ -2746,6 +3235,65 @@ function KoCharacters:onOpenSettings()
                             self:showMsg("Prompts reset to defaults.", 2)
                         end,
                     })
+                end,
+            },
+            {
+                text     = "Export settings",
+                callback = function()
+                    local self_ref = self
+                    local function inputDialog(title, setting_key, hint, on_save)
+                        local dialog
+                        dialog = InputDialog:new{
+                            title      = title,
+                            input      = G_reader_settings:readSetting(setting_key) or "",
+                            input_hint = hint,
+                            buttons    = {{
+                                { text = "Cancel", callback = function() UIManager:close(dialog) end },
+                                {
+                                    text = "Save", is_enter_default = true,
+                                    callback = function()
+                                        local val = (dialog:getInputText() or ""):match("^%s*(.-)%s*$") or ""
+                                        G_reader_settings:saveSetting(setting_key, val)
+                                        UIManager:close(dialog)
+                                        if on_save then on_save(val) end
+                                    end,
+                                },
+                            }},
+                        }
+                        UIManager:show(dialog)
+                        dialog:onShowKeyboard()
+                    end
+                    local export_settings_menu
+                    export_settings_menu = Menu:new{
+                        title      = "Export Settings",
+                        item_table = {
+                            {
+                                text     = "Upload endpoint URL",
+                                callback = function()
+                                    inputDialog(
+                                        "Upload endpoint URL",
+                                        "kocharacters_upload_endpoint",
+                                        "https://example.com/api/upload",
+                                        function() self_ref:showMsg("Endpoint saved.", 2) end
+                                    )
+                                end,
+                            },
+                            {
+                                text     = "Upload API key",
+                                callback = function()
+                                    inputDialog(
+                                        "Upload API key",
+                                        "kocharacters_upload_api_key",
+                                        "your-secret-key",
+                                        function() self_ref:showMsg("API key saved.", 2) end
+                                    )
+                                end,
+                            },
+                        },
+                        width       = Screen:getWidth(),
+                        show_parent = self_ref.ui,
+                    }
+                    UIManager:show(export_settings_menu)
                 end,
             },
             {
@@ -3260,20 +3808,35 @@ function KoCharacters:onWordCharacterLookup(word)
         return
     end
 
-    -- Match characters whose name or any alias contains the selected word
+    -- Build a list of search tokens from the selected text:
+    -- always include the full phrase, plus each individual word (3+ chars, skip stopwords)
+    local stop = { the=1, a=1, an=1, of=1, ["in"]=1, at=1, to=1, ["and"]=1, ["or"]=1, ["for"]=1,
+                   with=1, by=1, on=1, from=1, is=1, was=1, he=1, she=1, his=1, her=1 }
     local word_lower = word:lower()
-    local matches = {}
-    for _, c in ipairs(all_chars) do
-        local found = (c.name or ""):lower():find(word_lower, 1, true)
-        if not found then
-            for _, alias in ipairs(c.aliases or {}) do
-                if alias:lower():find(word_lower, 1, true) then
-                    found = true
-                    break
-                end
+    local tokens = { word_lower }
+    for w in word_lower:gmatch("%a+") do
+        if #w >= 3 and not stop[w] then
+            table.insert(tokens, w)
+        end
+    end
+
+    local function charMatches(c)
+        local name_l = (c.name or ""):lower()
+        for _, tok in ipairs(tokens) do
+            if name_l:find(tok, 1, true) then return true end
+        end
+        for _, alias in ipairs(c.aliases or {}) do
+            local alias_l = alias:lower()
+            for _, tok in ipairs(tokens) do
+                if alias_l:find(tok, 1, true) then return true end
             end
         end
-        if found then table.insert(matches, c) end
+        return false
+    end
+
+    local matches = {}
+    for _, c in ipairs(all_chars) do
+        if charMatches(c) then table.insert(matches, c) end
     end
 
     if #matches == 0 then
@@ -3323,15 +3886,12 @@ function KoCharacters:onWordCharacterLookup(word)
                                     })
                                 end
                             end
-                            local ok_m, Menu2 = pcall(require, "ui/widget/menu")
-                            if ok_m and Menu2 then
-                                UIManager:show(Menu2:new{
-                                    title       = 'Merge "' .. char.name .. '" into...',
-                                    item_table  = others,
-                                    width       = Screen:getWidth(),
-                                    show_parent = self_ref.ui,
-                                })
-                            end
+                            UIManager:show(Menu:new{
+                                title       = 'Merge "' .. char.name .. '" into...',
+                                item_table  = others,
+                                width       = Screen:getWidth(),
+                                show_parent = self_ref.ui,
+                            })
                         end,
                     },
                     {

@@ -5,6 +5,12 @@ local json        = require("dkjson")
 local DataStorage = require("datastorage")
 local util        = require("util")
 
+local _id_seq = 0
+local function generateId()
+    _id_seq = _id_seq + 1
+    return tostring(os.time()) .. "_" .. tostring(_id_seq)
+end
+
 -- Merge two text fields: skip if one already contains the other (case-insensitive)
 local function mergeText(a, b)
     if not a or a == "" then return b or "" end
@@ -44,11 +50,26 @@ function CharacterDB:load(book_md5)
     if not data then
         return {}
     end
+    -- Backfill missing IDs (one-time migration for existing DBs)
+    local needs_save = false
+    for _, c in ipairs(data) do
+        if not c.id or c.id == "" then
+            c.id = generateId()
+            needs_save = true
+        end
+    end
+    if needs_save then self:save(book_md5, data) end
     return data
 end
 
 -- Save the full character list for a book
 function CharacterDB:save(book_md5, characters)
+    -- Safety net: ensure every character has an ID before persisting
+    for _, c in ipairs(characters) do
+        if not c.id or c.id == "" then
+            c.id = generateId()
+        end
+    end
     local path = self:dbPath(book_md5)
     local f = io.open(path, "w")
     if not f then
@@ -82,14 +103,17 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
         if c.name then
             local idx = name_to_idx[c.name:lower()]
             if idx then
+                local id         = existing[idx].id           -- preserve stable ID
                 local notes      = existing[idx].user_notes   -- never overwrite user notes
                 local first_seen = existing[idx].first_seen_page  -- set once, never updated
                 existing[idx] = c
+                existing[idx].id = id or generateId()
                 if notes      and notes ~= "" then existing[idx].user_notes      = notes      end
                 if first_seen                 then existing[idx].first_seen_page  = first_seen end
                 if page_num                   then existing[idx].source_page      = page_num   end
                 changed = true
             else
+                c.id = generateId()
                 if page_num then c.source_page = page_num; c.first_seen_page = page_num end
                 table.insert(existing, c)
                 name_to_idx[c.name:lower()] = #existing
@@ -225,6 +249,7 @@ function CharacterDB:updateCharacter(book_md5, original_name, updated_char)
     local characters = self:load(book_md5)
     for i, c in ipairs(characters) do
         if c.name == original_name then
+            updated_char.id = updated_char.id or c.id  -- preserve ID across updates
             characters[i] = updated_char
             self:save(book_md5, characters)
             return true
@@ -319,6 +344,52 @@ end
 
 function CharacterDB:clearPendingCleanup(book_md5)
     os.remove(self:pendingCleanupPath(book_md5))
+end
+
+-- ---------------------------------------------------------------------------
+-- Pending pages (pages that failed to scan due to network error)
+-- ---------------------------------------------------------------------------
+function CharacterDB:pendingPagesPath(book_md5)
+    return self:bookDir(book_md5) .. "/pending_pages.json"
+end
+
+function CharacterDB:loadPendingPages(book_md5)
+    local f = io.open(self:pendingPagesPath(book_md5), "r")
+    if not f then return {} end
+    local content = f:read("*a"); f:close()
+    return json.decode(content) or {}
+end
+
+function CharacterDB:hasPendingPages(book_md5)
+    return #self:loadPendingPages(book_md5) > 0
+end
+
+function CharacterDB:markPagePending(book_md5, page_num)
+    local pages = self:loadPendingPages(book_md5)
+    for _, p in ipairs(pages) do if p == page_num then return end end
+    table.insert(pages, page_num)
+    local f = io.open(self:pendingPagesPath(book_md5), "w")
+    if f then f:write(json.encode(pages)); f:close() end
+end
+
+-- Remove a list of page numbers from the pending list
+function CharacterDB:removePendingPages(book_md5, pages_to_remove)
+    if not pages_to_remove or #pages_to_remove == 0 then return end
+    local remove_set = {}
+    for _, p in ipairs(pages_to_remove) do remove_set[p] = true end
+    local pages = self:loadPendingPages(book_md5)
+    local new_list = {}
+    for _, p in ipairs(pages) do if not remove_set[p] then table.insert(new_list, p) end end
+    if #new_list == 0 then
+        os.remove(self:pendingPagesPath(book_md5))
+    else
+        local f = io.open(self:pendingPagesPath(book_md5), "w")
+        if f then f:write(json.encode(new_list)); f:close() end
+    end
+end
+
+function CharacterDB:clearPendingPages(book_md5)
+    os.remove(self:pendingPagesPath(book_md5))
 end
 
 -- ---------------------------------------------------------------------------
