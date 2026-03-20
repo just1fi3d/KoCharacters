@@ -1469,6 +1469,8 @@ function KoCharacters:formatCharacter(c)
     return table.concat(lines, "\n")
 end
 
+-- Returns CSS string and body HTML string separately, so the caller can
+-- pass css via ScrollHtmlWidget's css= parameter (MuPDF requires this).
 function KoCharacters:formatCharacterHTML(char, portrait_path)
     local function esc(s)
         s = tostring(s or "")
@@ -1478,21 +1480,21 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
         s = s:gsub('"',  "&quot;")
         return s
     end
+    local css = table.concat({
+        "@page{margin:0;}",
+        "html,body{margin:0;padding:0;}",
+        "body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;text-align:justify;}",
+        "img{display:block;width:100%;max-height:240px;border-radius:6px;margin-bottom:12px;}",
+        "h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;text-align:left;}",
+        ".role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;text-align:left;}",
+        "b{display:block;font-size:.78em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;text-align:left;}",
+        "p{margin:2px 0 0;text-align:justify;}",
+        ".quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;text-align:justify;}",
+        ".foot{font-size:.75em;color:#bbb;margin-top:12px;text-align:left;}",
+    })
     local p = {}
-    p[#p+1] = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
-    p[#p+1] = '@page{margin:0;}'
-    p[#p+1] = 'html,body{margin:0;padding:0;}'
-    p[#p+1] = 'body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;text-align:justify;}'
-    p[#p+1] = 'img.portrait{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:6px;margin-bottom:12px;}'
-    p[#p+1] = 'h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;text-align:left;}'
-    p[#p+1] = '.role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;text-align:left;}'
-    p[#p+1] = 'b{display:block;font-size:.78em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;text-align:left;}'
-    p[#p+1] = 'p{margin:2px 0 0;text-align:justify;}'
-    p[#p+1] = '.quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;text-align:justify;}'
-    p[#p+1] = '.foot{font-size:.75em;color:#bbb;margin-top:12px;text-align:left;}'
-    p[#p+1] = '</style></head><body>'
     if portrait_path then
-        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
+        p[#p+1] = '<img src="' .. portrait_path .. '">'
     end
     p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
     if char.role and char.role ~= "" and char.role ~= "unknown" then
@@ -1521,8 +1523,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     if char.source_page then
         p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(char.source_page) .. '</p>'
     end
-    p[#p+1] = '</body></html>'
-    return table.concat(p)
+    return css, table.concat(p)
 end
 
 -- ---------------------------------------------------------------------------
@@ -2188,7 +2189,7 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
                 end
             end
 
-            local html = self:formatCharacterHTML(char, portrait_src)
+            local html_css, html_body = self:formatCharacterHTML(char, portrait_src)
             local w    = Screen:getWidth()
             local h    = Screen:getHeight()
 
@@ -2205,11 +2206,10 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
             local btable_h = btable:getSize().h
 
             local html_widget = ScrollHtmlWidget:new{
-                html_body = html,
+                html_body = html_body,
+                css       = html_css,
                 width     = w,
                 height    = h - btable_h,
-                margin_h  = 0,
-                margin_w  = 0,
             }
 
             local frame = FrameContainer:new{
