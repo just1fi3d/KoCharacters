@@ -2162,7 +2162,7 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         local name    = c.name or "Unknown"
         local role    = (c.role and c.role ~= "" and c.role ~= "unknown")
                         and (" [" .. c.role .. "]") or ""
-        local cleanup = c.needs_cleanup and " ~" or ""
+        local cleanup = c.needs_cleanup and " *" or ""
         local char = c
         if c._spoiler then
             local real_name = c._real_name
@@ -3729,6 +3729,7 @@ function KoCharacters:onCleanCharacter(book_id, char_name)
     if result.relationships and type(result.relationships) == "table" then
         char.relationships = result.relationships
     end
+    char.needs_cleanup = nil
 
     self.db:updateCharacter(book_id, char_name, char)
     self:showMsg('"' .. char_name .. '" cleaned up.', 3)
