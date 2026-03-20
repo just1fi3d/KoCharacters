@@ -1512,11 +1512,11 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
         role_html = '<p class="role">' .. esc(char.role) .. '</p>'
     end
     if portrait_path then
-        p[#p+1] = '<table><tr>'
-        p[#p+1] = '<td style="width:33%;vertical-align:top;padding-right:10px;">'
+        p[#p+1] = '<table autosize="1"><tr>'
+        p[#p+1] = '<td style="width:67%;vertical-align:top;padding-right:10px;">'
         p[#p+1] = name_html .. role_html .. aliases_html
         p[#p+1] = '</td>'
-        p[#p+1] = '<td style="width:67%;vertical-align:top;">'
+        p[#p+1] = '<td style="width:33%;vertical-align:top;">'
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
         p[#p+1] = '</td>'
         p[#p+1] = '</tr></table>'
