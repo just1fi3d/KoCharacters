@@ -1499,10 +1499,11 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     })
     local p = {}
 
-    -- Header: table, name/role/aliases left (67%), portrait right (33%)
+    -- Header: portrait inline float right, text flows left
     if portrait_path then
-        p[#p+1] = '<table><tr>'
-        p[#p+1] = '<td width="67%" style="padding-right:10px;">'
+        p[#p+1] = '<div style="float:right;width:33%;margin-left:10px;">'
+        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
+        p[#p+1] = '</div>'
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
             p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
@@ -1512,10 +1513,6 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
             for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
             p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
         end
-        p[#p+1] = '</td>'
-        p[#p+1] = '<td width="33%">'
-        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-        p[#p+1] = '</td></tr></table>'
     else
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
