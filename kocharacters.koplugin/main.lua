@@ -1469,6 +1469,60 @@ function KoCharacters:formatCharacter(c)
     return table.concat(lines, "\n")
 end
 
+function KoCharacters:formatCharacterHTML(char, portrait_path)
+    local function esc(s)
+        s = tostring(s or "")
+        s = s:gsub("&",  "&amp;")
+        s = s:gsub("<",  "&lt;")
+        s = s:gsub(">",  "&gt;")
+        s = s:gsub('"',  "&quot;")
+        return s
+    end
+    local p = {}
+    p[#p+1] = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
+    p[#p+1] = 'body{font-family:Georgia,serif;margin:0;padding:12px;background:#fdf6e3;color:#333;line-height:1.5;}'
+    p[#p+1] = 'img.portrait{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:6px;margin-bottom:12px;}'
+    p[#p+1] = 'h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;}'
+    p[#p+1] = '.role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;}'
+    p[#p+1] = 'b{display:block;font-size:.78em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;}'
+    p[#p+1] = 'p{margin:2px 0 0;}'
+    p[#p+1] = '.quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;}'
+    p[#p+1] = '.foot{font-size:.75em;color:#bbb;margin-top:12px;}'
+    p[#p+1] = '</style></head><body>'
+    if portrait_path then
+        p[#p+1] = '<img class="portrait" src="file://' .. portrait_path .. '">'
+    end
+    p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
+    if char.role and char.role ~= "" and char.role ~= "unknown" then
+        p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
+    end
+    if char.aliases and #char.aliases > 0 then
+        p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
+    end
+    if char.physical_description and char.physical_description ~= "" then
+        p[#p+1] = '<b>Appearance</b><p>' .. esc(char.physical_description) .. '</p>'
+    end
+    if char.personality and char.personality ~= "" then
+        p[#p+1] = '<b>Personality</b><p>' .. esc(char.personality) .. '</p>'
+    end
+    if char.relationships and #char.relationships > 0 then
+        local rels = {}
+        for _, r in ipairs(char.relationships) do rels[#rels+1] = esc(r) end
+        p[#p+1] = '<b>Relationships</b><p>' .. table.concat(rels, "<br>") .. '</p>'
+    end
+    if char.first_appearance_quote and char.first_appearance_quote ~= "" then
+        p[#p+1] = '<b>First seen</b><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p>'
+    end
+    if char.user_notes and char.user_notes ~= "" then
+        p[#p+1] = '<b>My notes</b><p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p>'
+    end
+    if char.source_page then
+        p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(char.source_page) .. '</p>'
+    end
+    p[#p+1] = '</body></html>'
+    return table.concat(p)
+end
+
 -- ---------------------------------------------------------------------------
 -- Edit character
 -- ---------------------------------------------------------------------------
@@ -2037,6 +2091,145 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
     processBatch(start_page)
 end
 
+function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
+    local self_ref = self
+    local name     = char.name or "Unknown"
+
+    -- Shared button rows for both viewers
+    local function make_buttons(close_fn)
+        local others_for_merge = {}
+        for _, other in ipairs(self_ref.db:load(book_id)) do
+            if other.name ~= name then
+                local other_name = other.name
+                table.insert(others_for_merge, {
+                    text     = other_name,
+                    callback = function()
+                        UIManager:show(ConfirmBox:new{
+                            text        = 'Merge "' .. name .. '" into "' .. other_name .. '"?\n'
+                                          .. '"' .. name .. '" will be removed.',
+                            ok_text     = "Merge",
+                            ok_callback = function()
+                                self_ref.db:mergeCharacters(book_id, name, other_name)
+                                self_ref:showMsg('"' .. name .. '" merged into "' .. other_name .. '".', 3)
+                            end,
+                        })
+                    end,
+                })
+            end
+        end
+        local function do_merge()
+            close_fn()
+            local ok_m, Menu2 = pcall(require, "ui/widget/menu")
+            if ok_m and Menu2 then
+                UIManager:show(Menu2:new{
+                    title       = 'Merge "' .. name .. '" into...',
+                    item_table  = others_for_merge,
+                    width       = Screen:getWidth(),
+                    show_parent = self_ref.ui,
+                })
+            end
+        end
+        local function do_delete()
+            close_fn()
+            UIManager:show(ConfirmBox:new{
+                text        = 'Delete "' .. name .. '" from the character list?',
+                ok_text     = "Delete",
+                ok_callback = function()
+                    self_ref.db:deleteCharacter(book_id, name)
+                    self_ref:showMsg(name .. " deleted.", 2)
+                end,
+            })
+        end
+        return {
+            {
+                { text = "Re-analyze", callback = function() close_fn(); self_ref:onReanalyzeCharacter(book_id, char) end },
+                { text = "Clean up",   callback = function() close_fn(); self_ref:onCleanCharacter(book_id, char.name) end },
+                { text = "Edit",       callback = function() close_fn(); self_ref:onEditCharacter(book_id, char) end },
+            },
+            {
+                { text = "Gen. portrait", callback = function()
+                    close_fn()
+                    self_ref:onGeneratePortrait(book_id, char)
+                    self_ref:showCharacterViewer(book_id, char, sort_mode, query)
+                end },
+                { text = "Merge into...", callback = do_merge },
+                { text = "Delete",        callback = do_delete },
+            },
+        }
+    end
+
+    -- HTML viewer
+    if G_reader_settings:readSetting("kocharacters_html_viewer") then
+        local ok_s, ScrollHtmlWidget = pcall(require, "ui/widget/scrollhtmlwidget")
+        local ok_f, FrameContainer   = pcall(require, "ui/widget/container/framecontainer")
+        local ok_c, CenterContainer  = pcall(require, "ui/widget/container/centercontainer")
+        local ok_v, VerticalGroup    = pcall(require, "ui/widget/verticalgroup")
+        local ok_b, ButtonTable      = pcall(require, "ui/widget/buttontable")
+        local Geom                   = require("ui/geometry")
+
+        if ok_s and ok_f and ok_c and ok_v and ok_b then
+            local portrait_path = self:portraitPath(book_id, char)
+            local pf = io.open(portrait_path, "rb")
+            local has_portrait = pf ~= nil
+            if pf then pf:close() end
+
+            local html = self:formatCharacterHTML(char, has_portrait and portrait_path or nil)
+            local w    = math.floor(Screen:getWidth()  * 0.9)
+            local h    = math.floor(Screen:getHeight() * 0.85)
+
+            local dialog_ref = {}
+            local function close_fn()
+                if dialog_ref[1] then UIManager:close(dialog_ref[1]) end
+            end
+
+            local rows = make_buttons(close_fn)
+            -- Add Close button to the last row
+            table.insert(rows[#rows], { text = "Close", callback = close_fn })
+
+            local btable = ButtonTable:new{ width = w, buttons = rows }
+            local btable_h = btable:getSize().h
+
+            local html_widget = ScrollHtmlWidget:new{
+                html_body = html,
+                width     = w,
+                height    = h - btable_h,
+            }
+
+            local frame = FrameContainer:new{
+                radius  = 6,
+                padding = 0,
+                VerticalGroup:new{
+                    align = "left",
+                    html_widget,
+                    btable,
+                },
+            }
+
+            local center = CenterContainer:new{
+                dimen = Geom:new{ w = Screen:getWidth(), h = Screen:getHeight() },
+                frame,
+            }
+
+            dialog_ref[1] = center
+            UIManager:show(center)
+            return
+        end
+        -- Fall through to text viewer if any widget is unavailable
+    end
+
+    -- Text viewer (default / fallback)
+    local viewer
+    local function close_fn() UIManager:close(viewer) end
+    viewer = TextViewer:new{
+        title         = name,
+        text          = self:formatCharacter(char),
+        width         = math.floor(Screen:getWidth()  * 0.9),
+        height        = math.floor(Screen:getHeight() * 0.85),
+        buttons_table = make_buttons(close_fn),
+    }
+    UIManager:show(viewer)
+end
+
 function KoCharacters:onViewCharacters()
     local book_id = self:getBookID()
     if not book_id then
@@ -2190,99 +2383,11 @@ function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
         table.insert(items, {
             text     = name .. role .. cleanup,
             callback = function()
-                -- Mark as unlocked so navigating back won't hide this character again
                 if not char.unlocked then
                     char.unlocked = true
                     self_ref.db:updateCharacter(book_id, char.name, char)
                 end
-                local viewer
-                viewer = TextViewer:new{
-                    title  = name,
-                    text   = self_ref:formatCharacter(char),
-                    width  = math.floor(Screen:getWidth() * 0.9),
-                    height = math.floor(Screen:getHeight() * 0.85),
-                    buttons_table = {
-                        {
-                            {
-                                text     = "Generate Portrait",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onGeneratePortrait(book_id, char)
-                                end,
-                            },
-                            {
-                                text     = "Merge into...",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    local others = {}
-                                    for _, other in ipairs(self_ref.db:load(book_id)) do
-                                        if other.name ~= name then
-                                            local other_name = other.name
-                                            table.insert(others, {
-                                                text     = other_name,
-                                                callback = function()
-                                                    UIManager:show(ConfirmBox:new{
-                                                        text        = 'Merge "' .. name .. '" into "' .. other_name .. '"?\n'
-                                                                      .. 'Their info will be combined and "' .. name .. '" removed.',
-                                                        ok_text     = "Merge",
-                                                        ok_callback = function()
-                                                            self_ref.db:mergeCharacters(book_id, name, other_name)
-                                                            self_ref:showMsg('"' .. name .. '" merged into "' .. other_name .. '".', 3)
-                                                        end,
-                                                    })
-                                                end,
-                                            })
-                                        end
-                                    end
-                                    UIManager:show(Menu:new{
-                                        title       = 'Merge "' .. name .. '" into...',
-                                        item_table  = others,
-                                        width       = Screen:getWidth(),
-                                        show_parent = self_ref.ui,
-                                    })
-                                end,
-                            },
-                            {
-                                text     = "Delete Character",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    UIManager:show(ConfirmBox:new{
-                                        text        = 'Delete "' .. name .. '" from the character list?',
-                                        ok_text     = "Delete",
-                                        ok_callback = function()
-                                            self_ref.db:deleteCharacter(book_id, name)
-                                            self_ref:showMsg(name .. " deleted.", 2)
-                                        end,
-                                    })
-                                end,
-                            },
-                        },
-                        {
-                            {
-                                text     = "Re-analyze",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onReanalyzeCharacter(book_id, char)
-                                end,
-                            },
-                            {
-                                text     = "Clean up",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onCleanCharacter(book_id, char.name)
-                                end,
-                            },
-                            {
-                                text     = "Edit",
-                                callback = function()
-                                    UIManager:close(viewer)
-                                    self_ref:onEditCharacter(book_id, char)
-                                end,
-                            },
-                        },
-                    },
-                }
-                UIManager:show(viewer)
+                self_ref:showCharacterViewer(book_id, char, sort_mode, query)
             end,
         })
         end  -- else (not spoiler)
@@ -3255,6 +3360,15 @@ function KoCharacters:onOpenSettings()
                     local on = G_reader_settings:readSetting("kocharacters_spoiler_protection")
                     G_reader_settings:saveSetting("kocharacters_spoiler_protection", not on)
                     self:showMsg("Spoiler protection: " .. (not on and "ON" or "OFF"), 2)
+                end,
+            },
+            {
+                text = "Character detail view: "
+                    .. (G_reader_settings:readSetting("kocharacters_html_viewer") and "HTML (with portrait)" or "Text"),
+                callback = function()
+                    local on = G_reader_settings:readSetting("kocharacters_html_viewer")
+                    G_reader_settings:saveSetting("kocharacters_html_viewer", not on)
+                    self:showMsg("Character view: " .. (not on and "HTML (with portrait)" or "Text"), 2)
                 end,
             },
             {
