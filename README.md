@@ -42,7 +42,7 @@ All actions live under the reader menu → **KoCharacters**:
 | **View saved characters** | Browse the full character list; tap a name to see their profile and take actions |
 | **Re-analyze character** | Pick a character and re-run Gemini against the current page to enrich their profile |
 | **View relationship map** | Gemini reads all saved profiles and produces a text relationship map |
-| **Cleanup all characters** | Batch-deduplicates redundant text in all character profiles via Gemini |
+| **Cleanup all characters** | Batch-deduplicates redundant text in all character profiles via Gemini, then detects and offers to merge characters that are almost certainly the same person |
 | **Generate portraits** | Select one or more characters to generate AI portraits via Imagen |
 | **Export...** | Export character list (HTML) or Export as ZIP (HTML + portraits) |
 | **Settings...** | Configure keys, auto-extract, indicators, spoiler protection, and prompts |
@@ -108,6 +108,8 @@ Scans every page in a chapter in batches of 4 pages per Gemini call, sleeping 3 
 The **KoCharacters** menu title shows **"— cleanup needed"** when auto-extract has enriched one or more existing characters but skipped the Gemini deduplication pass to avoid blocking. Over multiple page scans, enriched fields can accumulate redundant phrases (e.g. "brave; brave" or "tall with dark hair; tall, dark hair").
 
 Run **"Cleanup all characters"** to send all affected profiles to Gemini for a single deduplication pass. The flag also clears automatically at the end of a chapter scan.
+
+After the text cleanup pass, the plugin runs a second Gemini call across all character profiles to detect characters that are almost certainly the same person (e.g. a character referred to by their first name in some chapters and by a title or surname in others). Gemini requires strong evidence across multiple fields before suggesting a merge — name similarity alone is not enough. For each high-confidence match found, a confirmation dialog shows the two names and the reason for the suggestion; you can merge or skip each one individually. Merging combines aliases, relationships, physical description, and personality into the kept record.
 
 ### Portrait generation
 
@@ -185,6 +187,7 @@ The book ID is derived from the sanitized book title and a byte-sum hash of the 
 | **Edit re-analyze prompt** | Customise the re-analysis prompt |
 | **Edit relationship map prompt** | Customise the relationship map prompt |
 | **Edit portrait prompt** | Customise the Imagen portrait generation prompt |
+| **Edit merge detection prompt** | Customise the prompt used to detect duplicate characters during cleanup |
 | **View book context** | View the auto-built genre/era/setting summary; option to clear it |
 
 ### General settings

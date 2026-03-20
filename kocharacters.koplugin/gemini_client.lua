@@ -392,6 +392,73 @@ Character profiles to clean:
     return result, nil, extractUsage(parsed)
 end
 
+GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT = [[
+You are analyzing a list of character profiles from a book to find characters that are almost certainly the same person referred to by different names, titles, or aliases.
+
+Rules:
+- Only suggest a merge when you are HIGHLY CONFIDENT the two characters are the same person. There must be strong supporting evidence across multiple fields (e.g. matching physical description AND matching relationships AND names that are clearly variants of each other).
+- Do NOT suggest merges based on name similarity alone.
+- Do NOT suggest merges based on a single shared trait.
+- Prefer to keep the most complete or most commonly used name as "keep".
+- A character can only appear in one merge group.
+- If you find no high-confidence merges, return an empty array.
+
+Return ONLY a valid JSON array (no markdown, no code fences). Each element must have exactly these keys:
+[{ "keep": "primary name to keep", "absorb": ["name to merge in", ...], "reason": "one-sentence explanation of why these are the same person" }]
+
+Character profiles:
+{{characters}}
+]]
+
+-- Detect groups of characters that are almost certainly the same person
+-- Returns: array of {keep, absorb, reason} or nil, err, usage
+function GeminiClient:detectMergeGroups(characters, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not characters or #characters < 2 then return {}, nil end
+
+    local tmpl = prompt_template or GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT
+    local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
+
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.1, maxOutputTokens = 2048 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url     = API_BASE .. "?key=" .. self.api_key,
+        method  = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then return nil, "Gemini returned no text" end
+    text = stripCodeFences(text)
+    local result, _, jerr = json.decode(text)
+    if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    return result, nil, extractUsage(parsed)
+end
+
 -- Clean up a character profile: remove duplicate/redundant text in all fields
 function GeminiClient:cleanCharacter(character, cleanup_prompt)
     if not self.api_key or self.api_key == "" then
