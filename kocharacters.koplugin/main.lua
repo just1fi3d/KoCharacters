@@ -1499,30 +1499,29 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     })
     local p = {}
 
-    -- Header: portrait inline float right, text flows left
+    -- Header: two-column table (text left 67%, portrait right 33%)
+    local aliases_html = ""
+    if char.aliases and #char.aliases > 0 then
+        local items = {}
+        for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
+        aliases_html = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
+    end
+    local name_html = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
+    local role_html = ""
+    if char.role and char.role ~= "" and char.role ~= "unknown" then
+        role_html = '<p class="role">' .. esc(char.role) .. '</p>'
+    end
     if portrait_path then
-        p[#p+1] = '<div style="float:right;width:33%;margin-left:10px;">'
+        p[#p+1] = '<table><tr>'
+        p[#p+1] = '<td style="width:67%;vertical-align:top;padding-right:10px;">'
+        p[#p+1] = name_html .. role_html .. aliases_html
+        p[#p+1] = '</td>'
+        p[#p+1] = '<td style="width:33%;vertical-align:top;">'
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-        p[#p+1] = '</div>'
-        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-        if char.role and char.role ~= "" and char.role ~= "unknown" then
-            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
-        end
-        if char.aliases and #char.aliases > 0 then
-            local items = {}
-            for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
-            p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
-        end
+        p[#p+1] = '</td>'
+        p[#p+1] = '</tr></table>'
     else
-        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-        if char.role and char.role ~= "" and char.role ~= "unknown" then
-            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
-        end
-        if char.aliases and #char.aliases > 0 then
-            local items = {}
-            for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
-            p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
-        end
+        p[#p+1] = name_html .. role_html .. aliases_html
     end
 
     -- Body sections
