@@ -1480,15 +1480,16 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     end
     local p = {}
     p[#p+1] = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
+    p[#p+1] = '@page{margin:0;}'
     p[#p+1] = 'html,body{margin:0;padding:0;}'
-    p[#p+1] = 'body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;}'
+    p[#p+1] = 'body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;text-align:justify;}'
     p[#p+1] = 'img.portrait{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:6px;margin-bottom:12px;}'
-    p[#p+1] = 'h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;}'
-    p[#p+1] = '.role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;}'
-    p[#p+1] = 'b{display:block;font-size:.78em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;}'
+    p[#p+1] = 'h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;text-align:left;}'
+    p[#p+1] = '.role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;text-align:left;}'
+    p[#p+1] = 'b{display:block;font-size:.78em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;text-align:left;}'
     p[#p+1] = 'p{margin:2px 0 0;text-align:justify;}'
     p[#p+1] = '.quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;text-align:justify;}'
-    p[#p+1] = '.foot{font-size:.75em;color:#bbb;margin-top:12px;}'
+    p[#p+1] = '.foot{font-size:.75em;color:#bbb;margin-top:12px;text-align:left;}'
     p[#p+1] = '</style></head><body>'
     if portrait_path then
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
@@ -2207,6 +2208,8 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
                 html_body = html,
                 width     = w,
                 height    = h - btable_h,
+                margin_h  = 0,
+                margin_w  = 0,
             }
 
             local frame = FrameContainer:new{
