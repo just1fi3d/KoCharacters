@@ -1484,9 +1484,8 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
         "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.2;}",
-        "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;table-layout:fixed;}",
+        "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;}",
         "td{border:0;padding:0;vertical-align:top;}",
-        ".portrait-wrap{float:right;width:33%;margin-left:10px;}",
         "img.portrait{display:block;width:100%;border-radius:3px;}",
         "h1{font-size:1.45em;color:#000;margin:0 0 3px;font-weight:bold;}",
         ".role{color:#444;font-style:italic;margin:0;font-size:0.87em;}",
@@ -1500,9 +1499,10 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     })
     local p = {}
 
-    -- Header: portrait floated right (33%), text flows left
+    -- Header: table, name/role/aliases left (67%), portrait right (33%)
     if portrait_path then
-        p[#p+1] = '<div class="portrait-wrap"><img class="portrait" src="' .. portrait_path .. '"></div>'
+        p[#p+1] = '<table><tr>'
+        p[#p+1] = '<td width="67%" style="padding-right:10px;">'
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
             p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
@@ -1512,6 +1512,10 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
             for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
             p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
         end
+        p[#p+1] = '</td>'
+        p[#p+1] = '<td width="33%">'
+        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
+        p[#p+1] = '</td></tr></table>'
     else
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
