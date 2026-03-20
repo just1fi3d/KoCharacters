@@ -2965,58 +2965,103 @@ function KoCharacters:onCleanupAllCharacters()
         return
     end
 
-    local working_msg = InfoMessage:new{
-        text = "Cleaning up all " .. #characters .. " character(s)..."
-    }
-    UIManager:show(working_msg)
-    UIManager:forceRePaint()
-
-    local client = GeminiClient:new(api_key)
-    local cleaned, err, usage
-    local ok, call_err = pcall(function()
-        cleaned, err, usage = client:cleanCharacters(characters)
-    end)
-    UIManager:close(working_msg)
-    if ok and not err then self:recordUsage(usage) end
-
-    if not ok then
-        self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-        return
+    -- Count flagged characters
+    local flagged = {}
+    for _, c in ipairs(characters) do
+        if c.needs_cleanup then table.insert(flagged, c) end
     end
-    if err then
-        self:showMsg("Gemini error:\n" .. tostring(err), 8)
-        return
-    end
-    if not cleaned or type(cleaned) ~= "table" then
-        self:showMsg("Cleanup returned no data.", 4)
-        return
-    end
+    local n_flagged = #flagged
+    local n_all     = #characters
 
-    local all_chars = self.db:load(book_id)
-    local changed   = false
-    for i, cc in ipairs(cleaned) do
-        if cc.name then
-            local apply_msg = InfoMessage:new{
-                text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
-            }
-            UIManager:show(apply_msg)
-            UIManager:forceRePaint()
-            for _, orig in ipairs(all_chars) do
-                if orig.name == cc.name then
-                    if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
-                    if cc.personality          ~= nil    then orig.personality          = cc.personality          end
-                    if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
-                    if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
-                    changed = true; break
-                end
-            end
-            UIManager:close(apply_msg)
+    local function runCleanup(chars_to_clean)
+        local working_msg = InfoMessage:new{
+            text = "Cleaning up " .. #chars_to_clean .. " character(s)..."
+        }
+        UIManager:show(working_msg)
+        UIManager:forceRePaint()
+
+        local client = GeminiClient:new(api_key)
+        local cleaned, err, usage
+        local ok, call_err = pcall(function()
+            cleaned, err, usage = client:cleanCharacters(chars_to_clean)
+        end)
+        UIManager:close(working_msg)
+        if ok and not err then self:recordUsage(usage) end
+
+        if not ok then
+            self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+            return
         end
+        if err then
+            self:showMsg("Gemini error:\n" .. tostring(err), 8)
+            return
+        end
+        if not cleaned or type(cleaned) ~= "table" then
+            self:showMsg("Cleanup returned no data.", 4)
+            return
+        end
+
+        local all_chars = self.db:load(book_id)
+        local changed   = false
+        for i, cc in ipairs(cleaned) do
+            if cc.name then
+                local apply_msg = InfoMessage:new{
+                    text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
+                }
+                UIManager:show(apply_msg)
+                UIManager:forceRePaint()
+                for _, orig in ipairs(all_chars) do
+                    if orig.name == cc.name then
+                        if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
+                        if cc.personality          ~= nil    then orig.personality          = cc.personality          end
+                        if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
+                        if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
+                        orig.needs_cleanup = nil
+                        changed = true; break
+                    end
+                end
+                UIManager:close(apply_msg)
+            end
+        end
+
+        if changed then self.db:save(book_id, all_chars) end
+        self.db:clearPendingCleanup(book_id)
+        self:showMsg("Cleanup complete. " .. #cleaned .. " character(s) cleaned.", 4)
     end
 
-    if changed then self.db:save(book_id, all_chars) end
-    self.db:clearPendingCleanup(book_id)
-    self:showMsg("Cleanup complete. " .. #cleaned .. " character(s) cleaned.", 4)
+    -- Ask the user which characters to clean up
+    local dialog
+    local flagged_label = n_flagged > 0
+        and ("Flagged only (" .. n_flagged .. ")")
+        or  "Flagged only (none)"
+    dialog = TextViewer:new{
+        title  = "Cleanup scope",
+        text   = n_flagged .. " of " .. n_all .. " character(s) flagged for cleanup.",
+        width  = math.floor(Screen:getWidth() * 0.85),
+        height = math.floor(Screen:getHeight() * 0.4),
+        buttons_table = {{
+            {
+                text     = flagged_label,
+                enabled  = n_flagged > 0,
+                callback = function()
+                    UIManager:close(dialog)
+                    runCleanup(flagged)
+                end,
+            },
+            {
+                text     = "All (" .. n_all .. ")",
+                callback = function()
+                    UIManager:close(dialog)
+                    runCleanup(characters)
+                end,
+            },
+            {
+                text     = "Cancel",
+                callback = function() UIManager:close(dialog) end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
 end
 
 function KoCharacters:onClearDatabase()
