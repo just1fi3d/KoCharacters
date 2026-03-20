@@ -1483,26 +1483,26 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     local css = table.concat({
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.3;}",
+        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.2;}",
         "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;table-layout:fixed;}",
         "td{border:0;padding:0;vertical-align:top;}",
-        "img.portrait{display:block;width:100%;max-width:100%;border-radius:3px;}",
+        ".portrait-wrap{float:right;width:33%;margin-left:10px;}",
+        "img.portrait{display:block;width:100%;border-radius:3px;}",
         "h1{font-size:1.45em;color:#000;margin:0 0 3px;font-weight:bold;}",
         ".role{color:#444;font-style:italic;margin:0;font-size:0.87em;}",
         ".section{margin-top:16px;padding-top:12px;border-top:1px solid #ccc;}",
         ".label{font-size:0.76em;text-transform:uppercase;letter-spacing:.09em;color:#333;font-weight:bold;margin:0 0 5px;}",
         "p{margin:0;font-size:0.87em;text-align:justify;}",
-        "ul{margin:4px 0 0 0;padding-left:0;margin-left:18px;font-size:0.87em;}",
-        "ul li{margin-bottom:3px;padding-left:2px;}",
+        "ul{margin:4px 0 0 0;padding-left:20px;font-size:0.87em;}",
+        "ul li{margin-bottom:3px;}",
         ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
         ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
     })
     local p = {}
 
-    -- Header: invisible table, name/role/aliases left (~67%), portrait right (~33%)
+    -- Header: portrait floated right (33%), text flows left
     if portrait_path then
-        p[#p+1] = '<table><tr>'
-        p[#p+1] = '<td style="width:67%;padding-right:10px;">'
+        p[#p+1] = '<div class="portrait-wrap"><img class="portrait" src="' .. portrait_path .. '"></div>'
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
             p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
@@ -1512,10 +1512,6 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
             for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
             p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
         end
-        p[#p+1] = '</td>'
-        p[#p+1] = '<td style="width:33%;">'
-        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-        p[#p+1] = '</td></tr></table>'
     else
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
