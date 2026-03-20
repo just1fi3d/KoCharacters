@@ -1480,7 +1480,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     end
     local p = {}
     p[#p+1] = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
-    p[#p+1] = 'body{font-family:Georgia,serif;margin:0;padding:12px;background:#fdf6e3;color:#333;line-height:1.5;}'
+    p[#p+1] = 'body{font-family:Georgia,serif;margin:0;padding:12px;background:#fdf6e3;color:#333;line-height:1.5;text-align:justify;}'
     p[#p+1] = 'img.portrait{display:block;width:100%;max-height:240px;object-fit:cover;border-radius:6px;margin-bottom:12px;}'
     p[#p+1] = 'h1{font-size:1.3em;color:#5a3e1b;margin:0 0 2px;}'
     p[#p+1] = '.role{color:#888;font-style:italic;font-size:.9em;margin:0 0 10px;}'
@@ -1490,7 +1490,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     p[#p+1] = '.foot{font-size:.75em;color:#bbb;margin-top:12px;}'
     p[#p+1] = '</style></head><body>'
     if portrait_path then
-        p[#p+1] = '<img class="portrait" src="file://' .. portrait_path .. '">'
+        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
     end
     p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
     if char.role and char.role ~= "" and char.role ~= "unknown" then
@@ -2169,13 +2169,26 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
 
         if ok_s and ok_f and ok_c and ok_v and ok_b then
             local portrait_path = self:portraitPath(book_id, char)
+            local portrait_src = nil
             local pf = io.open(portrait_path, "rb")
-            local has_portrait = pf ~= nil
-            if pf then pf:close() end
+            if pf then
+                pf:close()
+                -- Embed as base64 data URI so the HTML renderer can display it
+                local tmp = portrait_path .. ".b64tmp"
+                if os.execute('base64 "' .. portrait_path .. '" > "' .. tmp .. '"') == 0 then
+                    local bf = io.open(tmp, "r")
+                    if bf then
+                        local b64 = bf:read("*a"):gsub("%s+", "")
+                        bf:close()
+                        portrait_src = "data:image/png;base64," .. b64
+                    end
+                    os.remove(tmp)
+                end
+            end
 
-            local html = self:formatCharacterHTML(char, has_portrait and portrait_path or nil)
-            local w    = math.floor(Screen:getWidth()  * 0.9)
-            local h    = math.floor(Screen:getHeight() * 0.85)
+            local html = self:formatCharacterHTML(char, portrait_src)
+            local w    = Screen:getWidth()
+            local h    = Screen:getHeight()
 
             local dialog_ref = {}
             local function close_fn()
@@ -2196,8 +2209,9 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
             }
 
             local frame = FrameContainer:new{
-                radius  = 6,
+                radius  = 0,
                 padding = 0,
+                bordersize = 0,
                 VerticalGroup:new{
                     align = "left",
                     html_widget,
