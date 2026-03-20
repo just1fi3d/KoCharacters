@@ -1483,30 +1483,39 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     local css = table.concat({
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;text-align:justify;font-size:1em;}",
-        "img.portrait{float:right;width:32%;margin:0 0 6px 10px;border-radius:4px;}",
-        ".clear{clear:both;}",
-        "h1{font-size:1.15em;color:#5a3e1b;margin:0 0 2px;text-align:left;}",
-        ".role{color:#888;font-style:italic;margin:0 0 6px;text-align:left;}",
-        "b{display:block;font-size:1em;text-transform:uppercase;letter-spacing:.06em;color:#999;margin-top:10px;text-align:left;}",
-        "p{margin:2px 0 0;text-align:justify;}",
+        "body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;}",
+        "table{border-collapse:collapse;border:0;width:100%;margin-bottom:4px;}",
+        "td{border:0;vertical-align:top;}",
+        "img.portrait{display:block;width:100%;border-radius:4px;}",
+        "h1{font-size:1.4em;color:#5a3e1b;margin:0 0 2px;text-align:left;}",
+        ".role{color:#888;font-style:italic;margin:0 0 6px;text-align:left;font-size:0.85em;}",
+        "b{display:block;font-size:0.85em;text-transform:uppercase;letter-spacing:.06em;color:#5a3e1b;margin-top:10px;text-align:left;}",
+        "p{margin:2px 0 0;text-align:justify;font-size:0.85em;}",
         ".quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;text-align:justify;}",
-        ".foot{font-size:.85em;color:#bbb;margin-top:12px;text-align:left;}",
+        ".foot{font-size:.75em;color:#bbb;margin-top:12px;text-align:left;}",
     })
     local p = {}
     if portrait_path then
+        -- Table layout: text left (67%), portrait right (33%)
+        p[#p+1] = '<table><tr><td style="width:67%;padding-right:8px;">'
+        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
+        if char.role and char.role ~= "" and char.role ~= "unknown" then
+            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
+        end
+        if char.aliases and #char.aliases > 0 then
+            p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
+        end
+        p[#p+1] = '</td><td style="width:33%;">'
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-    end
-    p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-    if char.role and char.role ~= "" and char.role ~= "unknown" then
-        p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
-    end
-    if char.aliases and #char.aliases > 0 then
-        p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
-    end
-    -- Clear the portrait float before the body sections
-    if portrait_path then
-        p[#p+1] = '<div class="clear"></div>'
+        p[#p+1] = '</td></tr></table>'
+    else
+        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
+        if char.role and char.role ~= "" and char.role ~= "unknown" then
+            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
+        end
+        if char.aliases and #char.aliases > 0 then
+            p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
+        end
     end
     if char.physical_description and char.physical_description ~= "" then
         p[#p+1] = '<b>Appearance</b><p>' .. esc(char.physical_description) .. '</p>'
