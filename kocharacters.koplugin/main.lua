@@ -1483,56 +1483,55 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     local css = table.concat({
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:8px;background:#fdf6e3;color:#333;line-height:1.5;}",
-        "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;margin-bottom:4px;outline:none;}",
-        "td{border:0;border-spacing:0;vertical-align:top;outline:none;}",
-        "img.portrait{display:block;width:100%;border-radius:4px;}",
-        "h1{font-size:1.4em;color:#5a3e1b;margin:0 0 2px;text-align:left;}",
-        ".role{color:#888;font-style:italic;margin:0 0 6px;text-align:left;font-size:0.85em;}",
-        "b{display:block;font-size:0.85em;text-transform:uppercase;letter-spacing:.06em;color:#5a3e1b;margin-top:10px;text-align:left;}",
-        "p{margin:2px 0 0;text-align:justify;font-size:0.85em;}",
-        ".quote{border-left:3px solid #c9a84c;padding-left:10px;color:#666;font-style:italic;text-align:justify;}",
-        ".foot{font-size:.75em;color:#bbb;margin-top:12px;text-align:left;}",
+        "body{font-family:Georgia,serif;padding:14px 16px;background:#fff;color:#111;line-height:1.55;}",
+        "img.portrait{float:right;width:36%;border-radius:3px;margin:0 0 10px 14px;}",
+        ".header{overflow:hidden;margin-bottom:4px;}",
+        "h1{font-size:1.45em;color:#000;margin:0 0 3px;font-weight:bold;}",
+        ".role{color:#444;font-style:italic;margin:0;font-size:0.87em;}",
+        ".section{margin-top:16px;padding-top:12px;border-top:1px solid #ccc;}",
+        ".label{font-size:0.76em;text-transform:uppercase;letter-spacing:.09em;color:#333;font-weight:bold;margin:0 0 5px;}",
+        "p{margin:0;font-size:0.87em;text-align:justify;}",
+        "ul{margin:4px 0 0 20px;padding:0;font-size:0.87em;}",
+        "ul li{margin-bottom:3px;}",
+        ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
+        ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
+        ".clear{clear:both;}",
     })
     local p = {}
+
+    -- Header: image floated right, name/role/aliases to the left
+    p[#p+1] = '<div class="header">'
     if portrait_path then
-        -- Table layout: text left (67%), portrait right (33%)
-        p[#p+1] = '<table><tr><td style="width:67%;padding-right:8px;">'
-        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-        if char.role and char.role ~= "" and char.role ~= "unknown" then
-            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
-        end
-        if char.aliases and #char.aliases > 0 then
-            p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
-        end
-        p[#p+1] = '</td><td style="width:33%;">'
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-        p[#p+1] = '</td></tr></table>'
-    else
-        p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-        if char.role and char.role ~= "" and char.role ~= "unknown" then
-            p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
-        end
-        if char.aliases and #char.aliases > 0 then
-            p[#p+1] = '<b>Also known as</b><p>' .. esc(table.concat(char.aliases, ", ")) .. '</p>'
-        end
     end
+    p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
+    if char.role and char.role ~= "" and char.role ~= "unknown" then
+        p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
+    end
+    if char.aliases and #char.aliases > 0 then
+        local items = {}
+        for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
+        p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
+    end
+    p[#p+1] = '<div class="clear"></div></div>'
+
+    -- Body sections
     if char.physical_description and char.physical_description ~= "" then
-        p[#p+1] = '<b>Appearance</b><p>' .. esc(char.physical_description) .. '</p>'
+        p[#p+1] = '<div class="section"><div class="label">Appearance</div><p>' .. esc(char.physical_description) .. '</p></div>'
     end
     if char.personality and char.personality ~= "" then
-        p[#p+1] = '<b>Personality</b><p>' .. esc(char.personality) .. '</p>'
+        p[#p+1] = '<div class="section"><div class="label">Personality</div><p>' .. esc(char.personality) .. '</p></div>'
     end
     if char.relationships and #char.relationships > 0 then
-        local rels = {}
-        for _, r in ipairs(char.relationships) do rels[#rels+1] = esc(r) end
-        p[#p+1] = '<b>Relationships</b><p>' .. table.concat(rels, "<br>") .. '</p>'
+        local items = {}
+        for _, r in ipairs(char.relationships) do items[#items+1] = '<li>' .. esc(r) .. '</li>' end
+        p[#p+1] = '<div class="section"><div class="label">Relationships</div><ul>' .. table.concat(items) .. '</ul></div>'
     end
     if char.first_appearance_quote and char.first_appearance_quote ~= "" then
-        p[#p+1] = '<b>First seen</b><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p>'
+        p[#p+1] = '<div class="section"><div class="label">First seen</div><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p></div>'
     end
     if char.user_notes and char.user_notes ~= "" then
-        p[#p+1] = '<b>My notes</b><p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p>'
+        p[#p+1] = '<div class="section"><div class="label">My notes</div><p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p></div>'
     end
     if char.source_page then
         p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(char.source_page) .. '</p>'
