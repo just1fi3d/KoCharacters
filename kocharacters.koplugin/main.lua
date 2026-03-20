@@ -1483,7 +1483,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     local css = table.concat({
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.55;}",
+        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.3;}",
         "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;}",
         "td{border:0;padding:0;vertical-align:top;}",
         "img.portrait{display:block;width:100%;border-radius:3px;}",
@@ -1492,7 +1492,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
         ".section{margin-top:16px;padding-top:12px;border-top:1px solid #ccc;}",
         ".label{font-size:0.76em;text-transform:uppercase;letter-spacing:.09em;color:#333;font-weight:bold;margin:0 0 5px;}",
         "p{margin:0;font-size:0.87em;text-align:justify;}",
-        "ul{margin:4px 0 0 0;padding-left:18px;font-size:0.87em;}",
+        "ul{margin:4px 0 0 0;padding-left:14px;font-size:0.87em;}",
         "ul li{margin-bottom:3px;}",
         ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
         ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
@@ -1502,7 +1502,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     -- Header: invisible table, name/role/aliases left (~62%), portrait right (~38%)
     if portrait_path then
         p[#p+1] = '<table><tr>'
-        p[#p+1] = '<td style="width:62%;padding-right:10px;">'
+        p[#p+1] = '<td style="width:67%;padding-right:10px;">'
         p[#p+1] = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
         if char.role and char.role ~= "" and char.role ~= "unknown" then
             p[#p+1] = '<p class="role">' .. esc(char.role) .. '</p>'
@@ -1513,7 +1513,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
             p[#p+1] = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
         end
         p[#p+1] = '</td>'
-        p[#p+1] = '<td style="width:38%;">'
+        p[#p+1] = '<td style="width:33%;">'
         p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
         p[#p+1] = '</td></tr></table>'
     else
