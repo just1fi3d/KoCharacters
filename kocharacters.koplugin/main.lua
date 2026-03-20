@@ -2210,6 +2210,7 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
                 frame,
             }
 
+            html_widget.dialog = center
             dialog_ref[1] = center
             UIManager:show(center)
             return
