@@ -3120,9 +3120,7 @@ function KoCharacters:onCleanupAllCharacters()
     local self_ref = self
 
     -- Step 2: after text cleanup, optionally run merge detection
-    local function runMergeDetection()
-        self_ref:onMergeDetection()
-    end
+    local function runMergeDetection() self_ref:onMergeDetection() end
 
     local BATCH_SIZE = G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5
 
@@ -3257,20 +3255,33 @@ function KoCharacters:onMergeDetection()
     UIManager:show(detect_msg)
     UIManager:forceRePaint()
 
+    local slim_chars = {}
+    for _, c in ipairs(all_chars) do
+        table.insert(slim_chars, {
+            name                 = c.name,
+            aliases              = c.aliases,
+            physical_description = c.physical_description,
+            personality          = c.personality,
+            role                 = c.role,
+            occupation           = c.occupation,
+            relationships        = c.relationships,
+        })
+    end
+
     local client = GeminiClient:new(api_key)
     local groups, derr, dusage
     local dok, dcall_err = pcall(function()
-        groups, derr, dusage = client:detectMergeGroups(all_chars, self_ref:getMergeDetectionPrompt())
+        groups, derr, dusage = client:detectMergeGroups(slim_chars, self_ref:getMergeDetectionPrompt())
     end)
     UIManager:close(detect_msg)
     if dok and not derr then self_ref:recordUsage(dusage) end
 
     if not dok then
-        self_ref:showMsg("Merge check error:\n" .. tostring(dcall_err), 8)
+        self_ref:showMsg("Plugin error:\n" .. tostring(dcall_err), 8)
         return
     end
     if derr then
-        self_ref:showMsg("Merge check error:\n" .. tostring(derr), 8)
+        self_ref:showMsg("Gemini error:\n" .. tostring(derr), 8)
         return
     end
     if not groups or #groups == 0 then
