@@ -585,6 +585,84 @@ function GeminiClient:buildRelationshipMap(characters, prompt_template)
     return text:match("^%s*(.-)%s*$"), nil, extractUsage(parsed)
 end
 
+-- Build a structured edge list for SVG graph rendering
+-- Returns: array of {from, to, label} or nil, err, usage
+GeminiClient.DEFAULT_RELATIONSHIP_GRAPH_PROMPT = [[
+You are analyzing a cast of characters from a novel.
+
+Return ONLY a valid JSON array (no markdown, no code fences). Each element represents one relationship edge:
+[{ "from": "Character A", "to": "Character B", "label": "short relationship label" }]
+
+Rules:
+- Use exact character names as they appear in the profiles.
+- Each edge should be directional and meaningful (e.g. "mentor of", "rival of", "parent of").
+- For mutual relationships (e.g. friends), emit ONE edge only — pick the most descriptive direction.
+- Omit characters with no meaningful connections to anyone else.
+- Keep labels to 3 words or fewer.
+- If there are no meaningful relationships, return an empty array [].
+
+Character profiles:
+{{characters}}
+]]
+
+function GeminiClient:buildRelationshipGraph(characters, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not characters or #characters == 0 then
+        return nil, "No characters to map."
+    end
+
+    local slim = {}
+    for _, c in ipairs(characters) do
+        table.insert(slim, {
+            name          = c.name,
+            role          = c.role,
+            relationships = c.relationships,
+        })
+    end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_RELATIONSHIP_GRAPH_PROMPT
+    local prompt = sub(tmpl, "{{characters}}", json.encode(slim))
+
+    local request_body = json.encode({
+        contents         = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url     = API_BASE .. "?key=" .. self.api_key,
+        method  = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then return nil, "Gemini returned no text" end
+    text = stripCodeFences(text)
+    local result, _, jerr = json.decode(text)
+    if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    return result, nil, extractUsage(parsed)
+end
+
 -- Fetch model metadata from the Gemini models endpoint
 function GeminiClient:fetchModelInfo()
     local url = API_MODELS_BASE .. MODEL .. "?key=" .. self.api_key

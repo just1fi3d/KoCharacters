@@ -1028,6 +1028,126 @@ function KoCharacters:recordUsage(usage)
     if fw then fw:write(json.encode(stats)); fw:close() end
 end
 
+-- Build an SVG relationship graph from an edge list.
+-- edges: array of {from, to, label}
+-- Returns an HTML string (SVG embedded in a minimal HTML page).
+local function buildSvgGraph(edges, width, height)
+    -- Collect unique node names preserving first-seen order
+    local node_names = {}
+    local seen = {}
+    for _, e in ipairs(edges) do
+        if not seen[e.from] then seen[e.from] = true; table.insert(node_names, e.from) end
+        if not seen[e.to]   then seen[e.to]   = true; table.insert(node_names, e.to)   end
+    end
+
+    local n = #node_names
+    if n == 0 then
+        return '<html><body style="font-family:Georgia,serif;padding:20px;">No relationships found.</body></html>'
+    end
+
+    -- Node positions on a circle, leaving padding for labels
+    local cx     = width  / 2
+    local cy     = height / 2
+    local radius = math.min(cx, cy) * 0.62
+    local pos    = {}
+    for i, name in ipairs(node_names) do
+        local angle = (2 * math.pi * (i - 1) / n) - (math.pi / 2)
+        pos[name] = {
+            x = cx + radius * math.cos(angle),
+            y = cy + radius * math.sin(angle),
+        }
+    end
+
+    local parts = {}
+    local function p(s) table.insert(parts, s) end
+
+    p(string.format(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">',
+        width, height
+    ))
+
+    -- Arrow marker definition
+    p('<defs>')
+    p('  <marker id="arr" markerWidth="8" markerHeight="8" refX="8" refY="3" orient="auto">')
+    p('    <path d="M0,0 L0,6 L8,3 z" fill="#555"/>')
+    p('  </marker>')
+    p('</defs>')
+
+    -- Edges
+    for _, e in ipairs(edges) do
+        local a, b = pos[e.from], pos[e.to]
+        if a and b then
+            -- Shorten line so arrowhead lands on node circle edge (r=18)
+            local dx   = b.x - a.x
+            local dy   = b.y - a.y
+            local dist = math.sqrt(dx*dx + dy*dy)
+            if dist > 0 then
+                local nr  = 20
+                local ex  = a.x + dx * (1 - nr / dist)
+                local ey  = a.y + dy * (1 - nr / dist)
+                local sx  = a.x + dx * (nr / dist)
+                local sy  = a.y + dy * (nr / dist)
+                p(string.format(
+                    '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#888" stroke-width="1.2" marker-end="url(#arr)"/>',
+                    sx, sy, ex, ey
+                ))
+                -- Edge label at midpoint
+                if e.label and e.label ~= "" then
+                    local mx = (sx + ex) / 2
+                    local my = (sy + ey) / 2
+                    p(string.format(
+                        '<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" fill="#555" font-family="Georgia,serif">%s</text>',
+                        mx, my - 3, e.label
+                    ))
+                end
+            end
+        end
+    end
+
+    -- Nodes
+    for _, name in ipairs(node_names) do
+        local pt = pos[name]
+        p(string.format('<circle cx="%.1f" cy="%.1f" r="18" fill="#fff" stroke="#333" stroke-width="1.5"/>', pt.x, pt.y))
+
+        -- Wrap long names: split on space into up to 2 lines
+        local words   = {}
+        for w in name:gmatch("%S+") do table.insert(words, w) end
+        local line1, line2
+        if #words <= 2 then
+            line1 = name
+        else
+            -- break roughly at midpoint
+            local mid = math.ceil(#words / 2)
+            local l1, l2 = {}, {}
+            for i, w in ipairs(words) do
+                if i <= mid then table.insert(l1, w) else table.insert(l2, w) end
+            end
+            line1 = table.concat(l1, " ")
+            line2 = table.concat(l2, " ")
+        end
+
+        if line2 then
+            p(string.format(
+                '<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" font-family="Georgia,serif" fill="#111">%s</text>',
+                pt.x, pt.y - 2, line1
+            ))
+            p(string.format(
+                '<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" font-family="Georgia,serif" fill="#111">%s</text>',
+                pt.x, pt.y + 9, line2
+            ))
+        else
+            p(string.format(
+                '<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" font-family="Georgia,serif" fill="#111">%s</text>',
+                pt.x, pt.y + 4, line1
+            ))
+        end
+    end
+
+    p('</svg>')
+
+    return table.concat(parts, "\n")
+end
+
 function KoCharacters:onViewRelationshipMap()
     local api_key = self:getApiKey()
     if api_key == "" then
@@ -1052,12 +1172,85 @@ function KoCharacters:onViewRelationshipMap()
     UIManager:forceRePaint()
 
     local client = GeminiClient:new(api_key)
+
+    -- Try SVG graph first
+    local edges, gerr, gusage
+    local gok, gcall_err = pcall(function()
+        edges, gerr, gusage = client:buildRelationshipGraph(characters)
+    end)
+    UIManager:close(working_msg)
+
+    if gok and not gerr and edges and #edges > 0 then
+        self:recordUsage(gusage)
+
+        local ok_s, ScrollHtmlWidget = pcall(require, "ui/widget/scrollhtmlwidget")
+        local ok_f, FrameContainer   = pcall(require, "ui/widget/container/framecontainer")
+        local ok_c, CenterContainer  = pcall(require, "ui/widget/container/centercontainer")
+        local ok_b, ButtonTable      = pcall(require, "ui/widget/buttontable")
+        local Size                   = require("ui/size")
+        local Blitbuffer             = require("ffi/blitbuffer")
+        local Geom                   = require("ui/geometry")
+
+        if ok_s and ok_f and ok_c and ok_b then
+            local w       = Screen:getWidth()  - 8
+            local h       = Screen:getHeight() - 8
+            local border  = 2
+            local inner_w = w - 2*border
+            local inner_h = h - 2*border
+
+            local svg = buildSvgGraph(edges, inner_w, math.floor(inner_h * 0.88))
+            local html_body = '<div style="text-align:center;padding:6px 0;">' .. svg .. '</div>'
+            local html_css  = "body{background:#fff;margin:0;padding:0;}"
+
+            local dialog_ref = {}
+            local function close_fn()
+                if dialog_ref[1] then UIManager:close(dialog_ref[1]) end
+            end
+
+            local btable   = ButtonTable:new{ width = inner_w, buttons = {{{ text = "Close", callback = close_fn }}} }
+            local btable_h = btable:getSize().h
+
+            local html_widget = ScrollHtmlWidget:new{
+                html_body = html_body,
+                css       = html_css,
+                width     = inner_w,
+                height    = inner_h - btable_h,
+            }
+
+            local frame = FrameContainer:new{
+                radius     = Size.radius.window,
+                padding    = 0,
+                bordersize = border,
+                background = Blitbuffer.COLOR_WHITE,
+                require("ui/widget/verticalgroup"):new{
+                    align = "left",
+                    html_widget,
+                    btable,
+                },
+            }
+
+            local center = CenterContainer:new{
+                dimen = Geom:new{ w = Screen:getWidth(), h = Screen:getHeight() },
+                frame,
+            }
+
+            html_widget.dialog = center
+            dialog_ref[1] = center
+            UIManager:show(center)
+            return
+        end
+    end
+
+    -- Fallback: text map
+    local working_msg2 = InfoMessage:new{ text = "Building relationship map..." }
+    UIManager:show(working_msg2)
+    UIManager:forceRePaint()
+
     local map_text, err, usage
     local ok, call_err = pcall(function()
         map_text, err, usage = client:buildRelationshipMap(characters, self:getRelationshipMapPrompt())
     end)
-
-    UIManager:close(working_msg)
+    UIManager:close(working_msg2)
     if ok and not err then self:recordUsage(usage) end
 
     if not ok then
