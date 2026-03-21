@@ -603,6 +603,10 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self:onCleanupAllCharacters() end,
             },
             {
+                text     = _("Detect & merge duplicates"),
+                callback = function() self:onMergeDetection() end,
+            },
+            {
                 text     = _("Generate portraits"),
                 callback = function() self:onBatchGeneratePortraits() end,
             },
@@ -3115,107 +3119,12 @@ function KoCharacters:onCleanupAllCharacters()
 
     local self_ref = self
 
-    -- Step 2: after text cleanup, check for characters to merge
+    -- Step 2: after text cleanup, optionally run merge detection
     local function runMergeDetection()
-        local all_chars = self_ref.db:load(book_id)
-        if #all_chars < 2 then
-            self_ref:showMsg("Cleanup complete.", 4)
-            return
-        end
-
-        local detect_msg = InfoMessage:new{ text = "Checking for duplicate characters..." }
-        UIManager:show(detect_msg)
-        UIManager:forceRePaint()
-
-        local client2 = GeminiClient:new(api_key)
-        local groups, derr, dusage
-        local dok, dcall_err = pcall(function()
-            groups, derr, dusage = client2:detectMergeGroups(all_chars, self_ref:getMergeDetectionPrompt())
-        end)
-        UIManager:close(detect_msg)
-        if dok and not derr then self_ref:recordUsage(dusage) end
-
-        if not dok then
-            self_ref:showMsg("Cleanup complete.\n(Merge check error: " .. tostring(dcall_err) .. ")", 8)
-            return
-        end
-        if derr then
-            self_ref:showMsg("Cleanup complete.\n(Merge check error: " .. tostring(derr) .. ")", 8)
-            return
-        end
-        if not groups or #groups == 0 then
-            self_ref:showMsg("Cleanup complete. No duplicate characters detected.", 4)
-            return
-        end
-
-        -- Filter out groups where any name no longer exists in the DB
-        local valid_groups = {}
-        local name_set = {}
-        for _, c in ipairs(all_chars) do name_set[c.name] = true end
-        for _, g in ipairs(groups) do
-            if g.keep and name_set[g.keep] and type(g.absorb) == "table" then
-                local valid = true
-                for _, a in ipairs(g.absorb) do
-                    if not name_set[a] then valid = false; break end
-                end
-                if valid and #g.absorb > 0 then
-                    table.insert(valid_groups, g)
-                end
-            end
-        end
-
-        if #valid_groups == 0 then
-            self_ref:showMsg("Cleanup complete. No duplicate characters detected.", 4)
-            return
-        end
-
-        -- Walk the user through each merge group one at a time
-        local group_idx = 1
-        local merged_count = 0
-
-        local function applyNext()
-            if group_idx > #valid_groups then
-                local msg = "Cleanup complete."
-                if merged_count > 0 then
-                    msg = msg .. " " .. merged_count .. " character(s) merged."
-                end
-                self_ref:showMsg(msg, 4)
-                return
-            end
-
-            local g = valid_groups[group_idx]
-            group_idx = group_idx + 1
-
-            local absorb_names = table.concat(g.absorb, ", ")
-            local reason = g.reason or "similar profiles"
-            local confirm_text = string.format(
-                'Merge %d of %d\n\n"%s" and "%s" appear to be the same character.\n\nReason: %s\n\nMerge into "%s"?',
-                group_idx - 1, #valid_groups,
-                g.keep, absorb_names,
-                reason, g.keep
-            )
-
-            UIManager:show(ConfirmBox:new{
-                text       = confirm_text,
-                ok_text    = "Merge",
-                cancel_text = "Skip",
-                ok_callback = function()
-                    for _, src in ipairs(g.absorb) do
-                        self_ref.db:mergeCharacters(book_id, src, g.keep)
-                        merged_count = merged_count + 1
-                    end
-                    applyNext()
-                end,
-                cancel_callback = function()
-                    applyNext()
-                end,
-            })
-        end
-
-        applyNext()
+        self_ref:onMergeDetection()
     end
 
-    local BATCH_SIZE = 5
+    local BATCH_SIZE = G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5
 
     local function runCleanup(chars_to_clean)
         local client    = GeminiClient:new(api_key)
@@ -3284,7 +3193,11 @@ function KoCharacters:onCleanupAllCharacters()
 
         if changed then self_ref.db:save(book_id, all_chars) end
         self_ref.db:clearPendingCleanup(book_id)
-        runMergeDetection()
+        if G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") then
+            runMergeDetection()
+        else
+            self_ref:showMsg("Cleanup complete.", 4)
+        end
     end
 
     -- Ask the user which characters to clean up
@@ -3320,6 +3233,114 @@ function KoCharacters:onCleanupAllCharacters()
         }},
     }
     UIManager:show(dialog)
+end
+
+function KoCharacters:onMergeDetection()
+    local book_id = self:getBookID()
+    if not book_id then return end
+
+    local api_key = self:getApiKey()
+    if api_key == "" then
+        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local all_chars = self.db:load(book_id)
+    if #all_chars < 2 then
+        self:showMsg("Not enough characters to merge.", 3)
+        return
+    end
+
+    local self_ref = self
+
+    local detect_msg = InfoMessage:new{ text = "Checking for duplicate characters..." }
+    UIManager:show(detect_msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local groups, derr, dusage
+    local dok, dcall_err = pcall(function()
+        groups, derr, dusage = client:detectMergeGroups(all_chars, self_ref:getMergeDetectionPrompt())
+    end)
+    UIManager:close(detect_msg)
+    if dok and not derr then self_ref:recordUsage(dusage) end
+
+    if not dok then
+        self_ref:showMsg("Merge check error:\n" .. tostring(dcall_err), 8)
+        return
+    end
+    if derr then
+        self_ref:showMsg("Merge check error:\n" .. tostring(derr), 8)
+        return
+    end
+    if not groups or #groups == 0 then
+        self_ref:showMsg("No duplicate characters detected.", 4)
+        return
+    end
+
+    -- Filter out groups where any name no longer exists in the DB
+    local valid_groups = {}
+    local name_set = {}
+    for _, c in ipairs(all_chars) do name_set[c.name] = true end
+    for _, g in ipairs(groups) do
+        if g.keep and name_set[g.keep] and type(g.absorb) == "table" then
+            local valid = true
+            for _, a in ipairs(g.absorb) do
+                if not name_set[a] then valid = false; break end
+            end
+            if valid and #g.absorb > 0 then
+                table.insert(valid_groups, g)
+            end
+        end
+    end
+
+    if #valid_groups == 0 then
+        self_ref:showMsg("No duplicate characters detected.", 4)
+        return
+    end
+
+    local group_idx = 1
+    local merged_count = 0
+
+    local function applyNext()
+        if group_idx > #valid_groups then
+            local msg = merged_count > 0
+                and (merged_count .. " character(s) merged.")
+                or  "No characters merged."
+            self_ref:showMsg(msg, 4)
+            return
+        end
+
+        local g = valid_groups[group_idx]
+        group_idx = group_idx + 1
+
+        local absorb_names = table.concat(g.absorb, ", ")
+        local reason = g.reason or "similar profiles"
+        local confirm_text = string.format(
+            'Merge %d of %d\n\n"%s" and "%s" appear to be the same character.\n\nReason: %s\n\nMerge into "%s"?',
+            group_idx - 1, #valid_groups,
+            g.keep, absorb_names,
+            reason, g.keep
+        )
+
+        UIManager:show(ConfirmBox:new{
+            text        = confirm_text,
+            ok_text     = "Merge",
+            cancel_text = "Skip",
+            ok_callback = function()
+                for _, src in ipairs(g.absorb) do
+                    self_ref.db:mergeCharacters(book_id, src, g.keep)
+                    merged_count = merged_count + 1
+                end
+                applyNext()
+            end,
+            cancel_callback = function()
+                applyNext()
+            end,
+        })
+    end
+
+    applyNext()
 end
 
 function KoCharacters:onClearDatabase()
@@ -3492,6 +3513,44 @@ function KoCharacters:onOpenSettings()
                     }
                     UIManager:show(dialog)
                     dialog:onShowKeyboard()
+                end,
+            },
+            {
+                text = "Cleanup batch size: "
+                    .. (G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5),
+                callback = function()
+                    local dialog
+                    dialog = InputDialog:new{
+                        title      = "Characters per cleanup batch",
+                        input      = tostring(G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5),
+                        input_type = "number",
+                        buttons    = {{
+                            { text = "Cancel", callback = function() UIManager:close(dialog) end },
+                            {
+                                text             = "Save",
+                                is_enter_default = true,
+                                callback         = function()
+                                    local val = tonumber(dialog:getInputText())
+                                    UIManager:close(dialog)
+                                    if val and val >= 1 then
+                                        G_reader_settings:saveSetting("kocharacters_cleanup_batch_size", math.floor(val))
+                                        self:showMsg("Cleanup batch size set to " .. math.floor(val), 2)
+                                    end
+                                end,
+                            },
+                        }},
+                    }
+                    UIManager:show(dialog)
+                    dialog:onShowKeyboard()
+                end,
+            },
+            {
+                text = "Detect duplicates after cleanup: "
+                    .. (G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") and "ON" or "OFF"),
+                callback = function()
+                    local on = G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup")
+                    G_reader_settings:saveSetting("kocharacters_detect_dupes_after_cleanup", not on)
+                    self:showMsg("Detect duplicates after cleanup: " .. (not on and "ON" or "OFF"), 2)
                 end,
             },
             {

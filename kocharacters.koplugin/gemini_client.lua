@@ -283,7 +283,7 @@ function GeminiClient:reanalyzeCharacter(page_text, char, reanalyze_prompt)
 
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 4096 },
+        generationConfig = { temperature = 0.2, maxOutputTokens = 8192 },
     })
 
     local response_body = {}
@@ -423,7 +423,7 @@ function GeminiClient:detectMergeGroups(characters, prompt_template)
 
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 2048 },
+        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
     })
 
     local response_body = {}
@@ -470,7 +470,7 @@ function GeminiClient:cleanCharacter(character, cleanup_prompt)
 
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 2048 },
+        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
     })
 
     local response_body = {}
@@ -545,7 +545,7 @@ function GeminiClient:buildRelationshipMap(characters, prompt_template)
 
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.3, maxOutputTokens = 4096 },
+        generationConfig = { temperature = 0.3, maxOutputTokens = 8192 },
     })
 
     local response_body = {}
