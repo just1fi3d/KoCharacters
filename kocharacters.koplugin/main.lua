@@ -1712,10 +1712,13 @@ function KoCharacters:onEditCharacter(book_id, char, refresh_browser_fn, show_vi
         }
 
         edit_menu = Menu:new{
-            title       = "Edit: " .. (char.name or ""),
-            item_table  = items,
-            width       = Screen:getWidth(),
-            show_parent = self_ref.ui,
+            title          = "Edit: " .. (char.name or ""),
+            item_table     = items,
+            width          = Screen:getWidth(),
+            show_parent    = self_ref.ui,
+            close_callback = function()
+                if show_viewer_fn then show_viewer_fn() end
+            end,
         }
         edit_menu.onReturn = function()
             UIManager:close(edit_menu)
