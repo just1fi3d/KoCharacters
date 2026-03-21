@@ -3404,7 +3404,8 @@ function KoCharacters:onOpenSettings()
                                 callback = function()
                                     G_reader_settings:saveSetting("kocharacters_imagen_model", model)
                                     UIManager:close(model_menu)
-                                    self_ref:showMsg("Imagen model set to:\n" .. model, 3)
+                                    UIManager:close(ai_menu)
+                                    openAISettings()
                                 end,
                             })
                         end
