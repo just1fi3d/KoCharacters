@@ -1476,7 +1476,7 @@ end
 
 -- Returns CSS string and body HTML string separately, so the caller can
 -- pass css via ScrollHtmlWidget's css= parameter (MuPDF requires this).
-function KoCharacters:formatCharacterHTML(char, portrait_path)
+function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
     local function esc(s)
         s = tostring(s or "")
         s = s:gsub("&",  "&amp;")
@@ -1488,45 +1488,50 @@ function KoCharacters:formatCharacterHTML(char, portrait_path)
     local css = table.concat({
         "@page{margin:0;}",
         "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.2;}",
-        "table{border-collapse:collapse;border:0;border-spacing:0;width:100%;}",
-        "td{border:0;padding:0;vertical-align:top;}",
-        "img.portrait{display:block;width:100%;border-radius:3px;}",
+        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.3;}",
+        "table{border-collapse:collapse;border-spacing:0;width:100%;}",
+        "td{padding:0;vertical-align:top;}",
+        "img.portrait{display:block;width:100%;height:auto;border-radius:3px;}",
         "h1{font-size:1.45em;color:#000;margin:0 0 3px;font-weight:bold;}",
         ".role{color:#444;font-style:italic;margin:0;font-size:0.87em;}",
         ".section{margin-top:16px;padding-top:12px;border-top:1px solid #ccc;}",
         ".label{font-size:0.76em;text-transform:uppercase;letter-spacing:.09em;color:#333;font-weight:bold;margin:0 0 5px;}",
         "p{margin:0;font-size:0.87em;text-align:justify;}",
-        "ul{margin:4px 0 0 0;padding-left:20px;font-size:0.87em;}",
+        "ul{margin:4px 0 0 0;padding-left:36px;font-size:0.87em;}",
         "ul li{margin-bottom:3px;}",
         ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
         ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
     })
     local p = {}
 
-    -- Header: two-column table (text left 67%, portrait right 33%)
-    local aliases_html = ""
-    if char.aliases and #char.aliases > 0 then
-        local items = {}
-        for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
-        aliases_html = '<div class="section"><div class="label">Also known as</div><ul>' .. table.concat(items) .. '</ul></div>'
-    end
     local name_html = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
     local role_html = ""
     if char.role and char.role ~= "" and char.role ~= "unknown" then
         role_html = '<p class="role">' .. esc(char.role) .. '</p>'
     end
+    local aliases_html = ""
+    if char.aliases and #char.aliases > 0 then
+        local items = {}
+        for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
+        local styled_items = {}
+        for _, a in ipairs(char.aliases) do
+            styled_items[#styled_items+1] = '<li style="font-family:Georgia,serif;">' .. esc(a) .. '</li>'
+        end
+        aliases_html = '<div style="margin-top:8px;font-family:Georgia,serif;"><div class="label">Also known as</div><ul>' .. table.concat(styled_items) .. '</ul></div>'
+    end
+    p[#p+1] = name_html
+    p[#p+1] = role_html
     if portrait_path then
-        p[#p+1] = '<table autosize="1"><tr>'
-        p[#p+1] = '<td style="width:67%;vertical-align:top;padding-right:10px;">'
-        p[#p+1] = name_html .. role_html .. aliases_html
-        p[#p+1] = '</td>'
-        p[#p+1] = '<td style="width:33%;vertical-align:top;">'
-        p[#p+1] = '<img class="portrait" src="' .. portrait_path .. '">'
-        p[#p+1] = '</td>'
-        p[#p+1] = '</tr></table>'
+        local body_w   = (container_w or 300) - 28  -- subtract body padding (14px each side)
+        local img_w    = math.floor(body_w * 0.4)
+        local text_w   = body_w - img_w - 12
+        p[#p+1] = '<div style="display:table;width:' .. body_w .. 'px;">'
+        p[#p+1] = '<div style="display:table-row;">'
+        p[#p+1] = '<div style="display:table-cell;width:' .. img_w .. 'px;vertical-align:top;padding-right:8px;"><img width="' .. (img_w-8) .. '" src="' .. portrait_path .. '"></div>'
+        p[#p+1] = '<div style="display:table-cell;width:' .. text_w .. 'px;vertical-align:top;font-family:Georgia,serif;">' .. aliases_html .. '</div>'
+        p[#p+1] = '</div></div>'
     else
-        p[#p+1] = name_html .. role_html .. aliases_html
+        p[#p+1] = aliases_html
     end
 
     -- Body sections
@@ -2188,37 +2193,32 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
         }
     end
 
-    -- HTML viewer
-    if G_reader_settings:readSetting("kocharacters_html_viewer") then
+    -- HTML viewer using ScrollHtmlWidget
+    do
         local ok_s, ScrollHtmlWidget = pcall(require, "ui/widget/scrollhtmlwidget")
         local ok_f, FrameContainer   = pcall(require, "ui/widget/container/framecontainer")
         local ok_c, CenterContainer  = pcall(require, "ui/widget/container/centercontainer")
         local ok_v, VerticalGroup    = pcall(require, "ui/widget/verticalgroup")
         local ok_b, ButtonTable      = pcall(require, "ui/widget/buttontable")
+        local Size                   = require("ui/size")
+        local Blitbuffer             = require("ffi/blitbuffer")
         local Geom                   = require("ui/geometry")
 
         if ok_s and ok_f and ok_c and ok_v and ok_b then
-            local portrait_path = self:portraitPath(book_id, char)
-            local portrait_src = nil
-            local pf = io.open(portrait_path, "rb")
-            if pf then
-                pf:close()
-                -- Embed as base64 data URI so the HTML renderer can display it
-                local tmp = portrait_path .. ".b64tmp"
-                if os.execute('base64 "' .. portrait_path .. '" > "' .. tmp .. '"') == 0 then
-                    local bf = io.open(tmp, "r")
-                    if bf then
-                        local b64 = bf:read("*a"):gsub("%s+", "")
-                        bf:close()
-                        portrait_src = "data:image/png;base64," .. b64
-                    end
-                    os.remove(tmp)
-                end
-            end
+            local DataStorage   = require("datastorage")
+            local portraits_dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
 
-            local html_css, html_body = self:formatCharacterHTML(char, portrait_src)
-            local w    = Screen:getWidth()
-            local h    = Screen:getHeight()
+            local portrait_filename = nil
+            local portrait_path = self:portraitPath(book_id, char)
+            local pf = io.open(portrait_path, "rb")
+            if pf then pf:close(); portrait_filename = portrait_path:match("([^/]+)$") end
+
+            local w = Screen:getWidth()  - 8
+            local h = Screen:getHeight() - 8
+            local border   = 2
+            local inner_w  = w - 2*border
+
+            local html_css, html_body = self:formatCharacterHTML(char, portrait_filename, inner_w)
 
             local dialog_ref = {}
             local function close_fn()
@@ -2226,23 +2226,25 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
             end
 
             local rows = make_buttons(close_fn)
-            -- Add Close button to the last row
             table.insert(rows[#rows], { text = "Close", callback = close_fn })
 
-            local btable = ButtonTable:new{ width = w, buttons = rows }
+            local btable   = ButtonTable:new{ width = inner_w, buttons = rows }
             local btable_h = btable:getSize().h
+            local inner_h  = h - 2*border
 
             local html_widget = ScrollHtmlWidget:new{
-                html_body = html_body,
-                css       = html_css,
-                width     = w,
-                height    = h - btable_h,
+                html_body               = html_body,
+                css                     = html_css,
+                html_resource_directory = portraits_dir,
+                width                   = inner_w,
+                height                  = inner_h - btable_h,
             }
 
             local frame = FrameContainer:new{
-                radius  = 0,
-                padding = 0,
-                bordersize = 0,
+                radius     = Size.radius.window,
+                padding    = 0,
+                bordersize = border,
+                background = Blitbuffer.COLOR_WHITE,
                 VerticalGroup:new{
                     align = "left",
                     html_widget,
@@ -2256,24 +2258,11 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query)
             }
 
             html_widget.dialog = center
-            dialog_ref[1] = center
+            dialog_ref[1]      = center
             UIManager:show(center)
             return
         end
-        -- Fall through to text viewer if any widget is unavailable
     end
-
-    -- Text viewer (default / fallback)
-    local viewer
-    local function close_fn() UIManager:close(viewer) end
-    viewer = TextViewer:new{
-        title         = name,
-        text          = self:formatCharacter(char),
-        width         = math.floor(Screen:getWidth()  * 0.9),
-        height        = math.floor(Screen:getHeight() * 0.85),
-        buttons_table = make_buttons(close_fn),
-    }
-    UIManager:show(viewer)
 end
 
 function KoCharacters:onViewCharacters()
@@ -3226,59 +3215,75 @@ function KoCharacters:onCleanupAllCharacters()
         applyNext()
     end
 
+    local BATCH_SIZE = 5
+
     local function runCleanup(chars_to_clean)
-        local working_msg = InfoMessage:new{
-            text = "Cleaning up " .. #chars_to_clean .. " character(s)..."
-        }
-        UIManager:show(working_msg)
-        UIManager:forceRePaint()
-
-        local client = GeminiClient:new(api_key)
-        local cleaned, err, usage
-        local ok, call_err = pcall(function()
-            cleaned, err, usage = client:cleanCharacters(chars_to_clean)
-        end)
-        UIManager:close(working_msg)
-        if ok and not err then self:recordUsage(usage) end
-
-        if not ok then
-            self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-            return
-        end
-        if err then
-            self:showMsg("Gemini error:\n" .. tostring(err), 8)
-            return
-        end
-        if not cleaned or type(cleaned) ~= "table" then
-            self:showMsg("Cleanup returned no data.", 4)
-            return
-        end
-
+        local client    = GeminiClient:new(api_key)
         local all_chars = self.db:load(book_id)
         local changed   = false
-        for i, cc in ipairs(cleaned) do
-            if cc.name then
-                local apply_msg = InfoMessage:new{
-                    text = "Applying cleanup " .. i .. "/" .. #cleaned .. ": " .. cc.name .. "..."
-                }
-                UIManager:show(apply_msg)
-                UIManager:forceRePaint()
-                for _, orig in ipairs(all_chars) do
-                    if orig.name == cc.name then
-                        if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
-                        if cc.personality          ~= nil    then orig.personality          = cc.personality          end
-                        if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
-                        if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
-                        orig.needs_cleanup = nil
-                        changed = true; break
+        local total     = #chars_to_clean
+
+        local i = 1
+        while i <= total do
+            local batch = {}
+            for j = i, math.min(i + BATCH_SIZE - 1, total) do
+                table.insert(batch, chars_to_clean[j])
+            end
+
+            local batch_end = math.min(i + BATCH_SIZE - 1, total)
+            local working_msg = InfoMessage:new{
+                text = "Cleaning up characters " .. i .. "–" .. batch_end .. " of " .. total .. "..."
+            }
+            UIManager:show(working_msg)
+            UIManager:forceRePaint()
+
+            local cleaned, err, usage
+            local ok, call_err = pcall(function()
+                cleaned, err, usage = client:cleanCharacters(batch)
+            end)
+            UIManager:close(working_msg)
+            if ok and not err then self_ref:recordUsage(usage) end
+
+            if not ok then
+                self_ref:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+                return
+            end
+            if err then
+                self_ref:showMsg("Gemini error:\n" .. tostring(err), 8)
+                return
+            end
+
+            if cleaned and type(cleaned) == "table" then
+                for idx, cc in ipairs(cleaned) do
+                    if cc.name then
+                        local apply_msg = InfoMessage:new{
+                            text = "Applying cleanup " .. (i + idx - 1) .. "/" .. total .. ": " .. cc.name .. "..."
+                        }
+                        UIManager:show(apply_msg)
+                        UIManager:forceRePaint()
+                        for _, orig in ipairs(all_chars) do
+                            if orig.name == cc.name then
+                                if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
+                                if cc.personality          ~= nil    then orig.personality          = cc.personality          end
+                                if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
+                                if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
+                                orig.needs_cleanup = nil
+                                changed = true; break
+                            end
+                        end
+                        UIManager:close(apply_msg)
                     end
                 end
-                UIManager:close(apply_msg)
+            end
+
+            i = i + BATCH_SIZE
+            if i <= total then
+                os.execute("sleep 3")
             end
         end
 
-        if changed then self.db:save(book_id, all_chars) end
-        self.db:clearPendingCleanup(book_id)
+        if changed then self_ref.db:save(book_id, all_chars) end
+        self_ref.db:clearPendingCleanup(book_id)
         runMergeDetection()
     end
 
