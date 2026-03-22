@@ -3427,16 +3427,19 @@ function KoCharacters:onOpenSettings()
                 {
                     text     = "Gemini Character Extraction key",
                     callback = function() self_ref:onSetExtractionApiKey() end,
+                    help     = "API key used for character extraction, cleanup, reanalysis, and relationship mapping. Get a free key at aistudio.google.com.\n\nFree tier limits: 15 requests/min, 500 requests/day, 250 000 tokens/min.",
                 },
                 {
                     text     = "Gemini Image Generation key",
                     callback = function() self_ref:onSetApiKey() end,
+                    help     = "A separate API key used to generate character portrait images with Google Imagen. Can be the same key as the extraction key, or a different one. Requires Imagen API access on your Google Cloud project.",
                 },
                 {
                     text_func = function()
                         local m = G_reader_settings:readSetting("kocharacters_imagen_model") or "imagen-4.0-fast-generate-001"
                         return "Imagen model: " .. m
                     end,
+                    help     = "The Imagen model used to generate character portraits.\n\n• imagen-4.0-fast: quickest, lowest cost\n• imagen-4.0: balanced quality and speed\n• imagen-4.0-ultra: highest quality, slower and more expensive",
                     callback = function()
                         local model_menu
                         local items = {}
@@ -3470,36 +3473,42 @@ function KoCharacters:onOpenSettings()
                     callback = function() self_ref:onEditPrompt(
                         "Extraction Prompt", "kocharacters_extraction_prompt",
                         GeminiClient.DEFAULT_EXTRACTION_PROMPT) end,
+                    help     = "The prompt sent to Gemini when scanning a page for new characters. Edit to change which fields are extracted, how characters are described, or to add custom instructions for your genre.",
                 },
                 {
                     text     = "Edit cleanup prompt",
                     callback = function() self_ref:onEditPrompt(
                         "Cleanup Prompt", "kocharacters_cleanup_prompt",
                         GeminiClient.DEFAULT_CLEANUP_PROMPT) end,
+                    help     = "The prompt used during 'Clean up all characters'. Controls how Gemini merges near-duplicate entries, normalises phrasing, and polishes character text fields across the whole book.",
                 },
                 {
                     text     = "Edit re-analyze prompt",
                     callback = function() self_ref:onEditPrompt(
                         "Re-analyze Prompt", "kocharacters_reanalyze_prompt",
                         GeminiClient.DEFAULT_REANALYZE_PROMPT) end,
+                    help     = "The prompt used when you tap 'Re-analyze' on an individual character. Gemini re-reads the character's existing profile alongside the current page text and produces an updated version.",
                 },
                 {
                     text     = "Edit relationship map prompt",
                     callback = function() self_ref:onEditPrompt(
                         "Relationship Map Prompt", "kocharacters_relationship_map_prompt",
                         GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT) end,
+                    help     = "The prompt used to generate the relationship map. Controls how Gemini describes the connections, alliances, conflicts, and dynamics between characters in the book.",
                 },
                 {
                     text     = "Edit portrait prompt",
                     callback = function() self_ref:onEditPrompt(
                         "Portrait Prompt", "kocharacters_portrait_prompt",
                         DEFAULT_PORTRAIT_PROMPT) end,
+                    help     = "The prompt template used when generating a character portrait with Imagen. Controls the visual style, composition, and mood. The character's name and description are appended automatically.",
                 },
                 {
                     text     = "Edit merge detection prompt",
                     callback = function() self_ref:onEditPrompt(
                         "Merge Detection Prompt", "kocharacters_merge_detection_prompt",
                         GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT) end,
+                    help     = "The prompt used when checking a batch of characters for near-duplicates. Gemini reviews the list and flags entries that likely represent the same character under different names or spellings.",
                 },
                 {
                     text     = "View book context (auto-built)",
@@ -3521,10 +3530,16 @@ function KoCharacters:onOpenSettings()
                             end,
                         })
                     end,
+                    help     = "Shows the accumulated summary the plugin has built for this book from previous scans. This context is included in extraction prompts to give Gemini continuity across pages. Tap to view; you can clear it here to start fresh.",
                 },
             },
             width       = Screen:getWidth(),
             show_parent = self_ref.ui,
+            onMenuHold  = function(_, item)
+                if item and item.help then
+                    UIManager:show(InfoMessage:new{ text = item.help })
+                end
+            end,
         }
         UIManager:show(ai_menu)
     end
