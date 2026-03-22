@@ -15,13 +15,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge branch into main
+      - name: Reset main to branch tip
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
-          git merge --ff-only origin/${{ github.ref_name }}
-          git push origin main
+          git push origin origin/${{ github.ref_name }}:refs/heads/main --force
 
       - name: Extract version from _meta.lua
         id: version
