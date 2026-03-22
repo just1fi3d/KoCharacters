@@ -3674,13 +3674,9 @@ function KoCharacters:onOpenSettings()
                 end,
             },
             {
-                text          = "View API usage",
-                callback      = function() self:onViewUsage() end,
-                hold_callback = function()
-                    UIManager:show(InfoMessage:new{
-                        text = "Shows your Gemini API consumption grouped by date: prompt tokens (text sent to the AI), output tokens (text received), and image generation calls.\n\nHelpful for staying within the free-tier limits: 15 requests/min, 500 requests/day, 250 000 tokens/min.",
-                    })
-                end,
+                text     = "View API usage",
+                callback = function() self:onViewUsage() end,
+                help     = "Shows your Gemini API consumption grouped by date: prompt tokens (text sent to the AI), output tokens (text received back), and image generation calls.\n\nUseful for tracking against free-tier limits: 15 requests/min, 500 requests/day, 250 000 tokens/min.",
             },
             {
                 text     = "Clear character database",
@@ -3782,6 +3778,11 @@ function KoCharacters:onOpenSettings()
         },
         width       = Screen:getWidth(),
         show_parent = self.ui,
+        onMenuHold  = function(_, item)
+            if item and item.help then
+                UIManager:show(InfoMessage:new{ text = item.help })
+            end
+        end,
     }
     UIManager:show(settings_menu)
 end
