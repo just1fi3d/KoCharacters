@@ -1,4 +1,4 @@
-name: Merge to main
+name: Merge to main and release
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - 'claude/**'
 
 jobs:
-  merge:
+  merge-and-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,3 +22,30 @@ jobs:
           git checkout main
           git merge --ff-only origin/${{ github.ref_name }}
           git push origin main
+
+      - name: Extract version from _meta.lua
+        id: version
+        run: |
+          VERSION=$(grep -oP '(?<=version = ")[^"]+' kocharacters.koplugin/_meta.lua)
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin "${{ steps.version.outputs.tag }}" | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build plugin ZIP
+        if: steps.check_tag.outputs.exists == 'false'
+        run: zip -r kocharacters.koplugin.zip kocharacters.koplugin/
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: kocharacters.koplugin.zip
+          generate_release_notes: true
