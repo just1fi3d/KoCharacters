@@ -3747,9 +3747,10 @@ function KoCharacters:onOpenSettings()
             {
                 text     = "About",
                 callback = function()
+                    local meta = require("_meta")
                     UIManager:show(TextViewer:new{
                         title = "About KoCharacters",
-                        text  = "KoCharacters\n\n"
+                        text  = "KoCharacters v" .. (meta.version or "?") .. "\n\n"
                              .. "Automatically extract, track, and enrich character profiles from your books using Google Gemini AI. "
                              .. "Generate portraits with Google Imagen. Runs on KOReader on Kindle and other supported devices.\n\n"
                              .. "\xC2\xA9 2026\nNefelodamon\n\n"
