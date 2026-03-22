@@ -3536,6 +3536,7 @@ function KoCharacters:onOpenSettings()
             {
                 text     = "AI Settings",
                 callback = function() openAISettings() end,
+                help     = "Opens AI configuration: set your Gemini API key, Imagen API key, and customise the AI prompts used for extraction, cleanup, reanalysis, and portrait generation.",
             },
             {
                 text_func = function()
@@ -3548,12 +3549,14 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "When ON, the plugin automatically scans the current page for new characters each time you turn a page. Requires an extraction API key to be set.",
             },
             {
                 text_func = function()
                     return "Auto-extract delay: "
                         .. (G_reader_settings:readSetting("kocharacters_auto_extract_delay") or 10) .. "s"
                 end,
+                help     = "How long (in seconds) the plugin waits after a page turn before scanning. A longer delay prevents accidental scans during quick swipes. Default: 10 s.",
                 callback = function()
                     local dialog
                     dialog = InputDialog:new{
@@ -3586,6 +3589,7 @@ function KoCharacters:onOpenSettings()
                     return "Cleanup batch size: "
                         .. (G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5)
                 end,
+                help     = "How many characters are sent to Gemini in a single cleanup request. Smaller batches use more API calls but stay safely under the rate limit. Default: 5.",
                 callback = function()
                     local dialog
                     dialog = InputDialog:new{
@@ -3624,6 +3628,7 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "When ON, KoCharacters automatically checks for near-duplicate character names after each cleanup run and warns you if any are found.",
             },
             {
                 text_func = function()
@@ -3636,6 +3641,7 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "Shows a small icon on-screen while the plugin is scanning a page in the background. Turn OFF if you find it distracting.",
             },
             {
                 text_func = function()
@@ -3648,6 +3654,7 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "When ON, AI-enriched character data (extra detail, backstory, traits) is saved automatically without asking for confirmation each time.",
             },
             {
                 text_func = function()
@@ -3660,6 +3667,7 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "When ON, characters whose profiles were built from pages you haven't reached yet are hidden as [SPOILER] in the browser. Tap a spoiler entry to reveal it.",
             },
             {
                 text_func = function()
@@ -3672,6 +3680,7 @@ function KoCharacters:onOpenSettings()
                     UIManager:close(settings_menu)
                     self_ref:onOpenSettings()
                 end,
+                help     = "Text mode shows plain character info in a scrollable text viewer.\nHTML mode renders a richer layout and displays the AI-generated portrait image (if one has been created for that character).",
             },
             {
                 text     = "View API usage",
@@ -3681,9 +3690,11 @@ function KoCharacters:onOpenSettings()
             {
                 text     = "Clear character database",
                 callback = function() self:onClearDatabase() end,
+                help     = "Permanently deletes all character data for every book. This cannot be undone — use with caution.",
             },
             {
                 text     = "Reset prompts to default",
+                help     = "Restores the built-in AI prompts for extraction, cleanup, reanalysis, relationship mapping, merge detection, and portrait generation. Any customisations you have made will be lost.",
                 callback = function()
                     UIManager:show(ConfirmBox:new{
                         text        = "Reset all prompts to their built-in defaults?",
@@ -3702,6 +3713,7 @@ function KoCharacters:onOpenSettings()
             },
             {
                 text     = "Export settings",
+                help     = "Configure the HTTP endpoint URL and API key used when uploading your character database to an external server (e.g. a personal web app or home server).",
                 callback = function()
                     local self_ref = self
                     local function inputDialog(title, setting_key, hint, on_save)
