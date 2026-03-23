@@ -44,7 +44,7 @@ All actions live under the reader menu → **KoCharacters**:
 | **View relationship map** | Gemini reads all saved profiles and produces a text relationship map |
 | **Cleanup all characters** | Batch-deduplicates redundant text in all character profiles via Gemini, then detects and offers to merge characters that are almost certainly the same person |
 | **Generate portraits** | Select one or more characters to generate AI portraits via Imagen |
-| **Export...** | Export character list (HTML) or Export as ZIP (HTML + portraits) |
+| **Export...** | Export character list (HTML), Export as ZIP (HTML + portraits), or Upload to server |
 | **Settings...** | Configure keys, auto-extract, indicators, spoiler protection, and prompts |
 
 ### Character detail screen
@@ -99,6 +99,10 @@ When Gemini returns characters that look like existing ones (Levenshtein distanc
 
 When enabled, the plugin automatically scans each new page as you turn to it, after a configurable debounce delay (default 10 seconds). A small **scanning icon** appears in the top-left corner while the Gemini call is in progress. When the call completes, the icon is replaced by a **character count badge** showing how many characters were found or updated, which fades after 4 seconds. Both indicators can be disabled in Settings.
 
+### Offline / pending pages
+
+When a page scan fails due to a network error (e.g. the Kindle is in flight mode), the page number is saved to a `pending_pages.json` sidecar. The next time auto-extract successfully completes a scan while connected, you are prompted: "N page(s) couldn't be scanned while offline — scan them now?" Accepting replays the failed pages in the same batched, rate-limited manner as chapter scan.
+
 ### Chapter scan
 
 Scans every page in a chapter in batches of 4 pages per Gemini call, sleeping 3 seconds between batches to stay within the free-tier rate limit (15 RPM). The "Scan specific chapter" option shows all TOC chapters with their page ranges and a scan status indicator (`[✓ done]`, `[~ N/M pages]`, or unseen).
@@ -128,6 +132,19 @@ Characters have an `unlocked` field. When spoiler protection is enabled in Setti
 
 Sends all saved character profiles to Gemini in one call and asks it to produce a text-based relationship map, listing each character's connections with short relationship labels.
 
+### Gesture and hardware button shortcuts
+
+The plugin registers six actions with KOReader's **Dispatcher**, which means any of them can be bound to a swipe gesture or hardware button in KOReader's gesture/button settings:
+
+| Action name | What it does |
+|---|---|
+| KoCharacters: Extract from page | Runs extraction on the current page |
+| KoCharacters: Scan chapter | Scans the current chapter |
+| KoCharacters: View characters | Opens the character browser |
+| KoCharacters: Re-analyze character… | Opens the character picker for re-analysis |
+| KoCharacters: View API usage | Shows the usage log |
+| KoCharacters: View relationship map | Generates and shows the relationship map |
+
 ### Export
 
 **Export character list** produces a styled HTML file with all characters, their profiles, and any generated portraits. Portraits appear on the left with character info on the right; clicking a portrait opens a full-screen lightbox.
@@ -135,6 +152,8 @@ Sends all saved character profiles to Gemini in one call and asks it to produce 
 **Export as ZIP** bundles the HTML file and the portraits folder into a single `.zip` file, ready to copy to another device.
 
 Both exports are saved inside the book's data folder (`kocharacters/<book_id>/`).
+
+**Upload to server** packages the character database, book metadata, and portraits into a `.tar.gz` archive and POSTs it to a configurable HTTP endpoint (e.g. a personal web app or home server) via `curl`. The endpoint URL and optional API key (`X-Api-Key` header) are set under **Settings... → Export settings**. The archive is deleted from the device after upload completes.
 
 ---
 
@@ -148,6 +167,8 @@ All files for a book are stored together in a single subdirectory named after th
 | `<koreader_data>/kocharacters/<book_id>/scanned.json` | Scanned page index |
 | `<koreader_data>/kocharacters/<book_id>/book_context.txt` | Auto-built genre/era/setting summary |
 | `<koreader_data>/kocharacters/<book_id>/portraits/` | Generated portrait images |
+| `<koreader_data>/kocharacters/<book_id>/pending_pages.json` | Page numbers that failed to scan while offline |
+| `<koreader_data>/kocharacters/<book_id>/pending_cleanup` | Flag file: present when one or more characters need cleanup |
 | `<koreader_data>/kocharacters/<book_id>/characters.html` | Exported character list |
 | `<koreader_data>/kocharacters/<book_id>/characters.zip` | Exported ZIP (HTML + portraits) |
 | `<koreader_data>/kocharacters/usage_stats.json` | Daily API usage log (shared across books) |
@@ -196,10 +217,14 @@ The book ID is derived from the sanitized book title and a byte-sum hash of the 
 |---|---|
 | **Auto-extract on page turn** | Automatically scan each page as you read |
 | **Auto-extract delay** | Seconds to wait after a page turn before calling Gemini (default 10s) |
+| **Cleanup batch size** | Characters sent to Gemini per cleanup request (default 5); lower values use more API calls but stay safely under the rate limit |
+| **Detect duplicates after cleanup** | When ON, automatically runs merge-detection after each cleanup pass |
 | **Scan indicator icon** | Show/hide the scanning and count icons in the top-left corner |
 | **Auto-accept enrichments** | Silently enrich existing characters when near-duplicates are detected, instead of prompting |
 | **Spoiler protection** | Hide characters first seen beyond your current page |
+| **Character detail view** | **Text** — plain scrollable viewer; **HTML (with portrait)** — richer layout with the AI-generated portrait image embedded |
 | **View API usage** | Daily log of Gemini text calls and Imagen image generations |
+| **Export settings** | Configure the upload endpoint URL and optional API key for "Upload to server" |
 | **Clear character database** | Delete all saved characters for the current book |
 | **Reset prompts to default** | Restore all prompts to their built-in defaults |
 
@@ -211,5 +236,6 @@ The book ID is derived from the sanitized book title and a byte-sum hash of the 
 - A free Google Gemini API key from aistudio.google.com (for character extraction)
 - A Google Imagen API key (optional, for portrait generation)
 - `unzip` available on the device (standard on Kindle)
-- `base64` and `curl` available on the device (standard on Kindle, required for portrait generation)
+- `base64` and `curl` available on the device (standard on Kindle, required for portrait generation and server upload)
 - `zip` available on the device (required for ZIP export — standard on Kindle via BusyBox)
+- `tar` available on the device (required for "Upload to server" — standard on Kindle via BusyBox)
