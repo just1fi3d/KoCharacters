@@ -41,24 +41,29 @@ local function levenshtein(a, b)
     return prev[lb]
 end
 
+-- Returns true when two already-lowercased names are similar enough to be duplicates.
+-- Both names must be at least 4 characters; exact matches are not considered similar
+-- (they are intentional updates, not conflicts).
+local function namesAreSimilar(a_low, b_low)
+    if #a_low < 4 or #b_low < 4 then return false end
+    if a_low == b_low then return false end
+    local dist      = levenshtein(a_low, b_low)
+    local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
+    local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
+    return dist <= threshold or substring ~= nil
+end
+
 -- Compare incoming (new) characters against an existing list; return conflict pairs.
 -- Exact name matches are intentional updates handled by merge() — skip them here.
 local function findIncomingConflicts(existing, incoming)
     local conflicts = {}
     for _, new_c in ipairs(incoming) do
         local new_low = (new_c.name or ""):lower()
-        if #new_low >= 4 then
-            for _, ex_c in ipairs(existing) do
-                local ex_low = (ex_c.name or ""):lower()
-                if #ex_low >= 4 and new_low ~= ex_low then
-                    local dist      = levenshtein(new_low, ex_low)
-                    local threshold = math.min(#new_low, #ex_low) <= 6 and 1 or 2
-                    local substring = new_low:find(ex_low, 1, true) or ex_low:find(new_low, 1, true)
-                    if dist <= threshold or substring then
-                        table.insert(conflicts, { new_char = new_c, existing_char = ex_c })
-                        break
-                    end
-                end
+        for _, ex_c in ipairs(existing) do
+            local ex_low = (ex_c.name or ""):lower()
+            if namesAreSimilar(new_low, ex_low) then
+                table.insert(conflicts, { new_char = new_c, existing_char = ex_c })
+                break
             end
         end
     end
@@ -78,17 +83,12 @@ local function deduplicateIncoming(chars)
                 if not removed[j] then
                     local b = chars[j]
                     local b_low = (b.name or ""):lower()
-                    if #a_low >= 4 and #b_low >= 4 then
-                        local dist      = levenshtein(a_low, b_low)
-                        local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
-                        local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
-                        if dist <= threshold or substring then
-                            -- Merge b's non-empty fields into a
-                            if (a.role == nil or a.role == "") and b.role and b.role ~= "" then a.role = b.role end
-                            if (a.physical_description == nil or a.physical_description == "") and b.physical_description and b.physical_description ~= "" then a.physical_description = b.physical_description end
-                            if (a.personality == nil or a.personality == "") and b.personality and b.personality ~= "" then a.personality = b.personality end
-                            removed[j] = true
-                        end
+                    if namesAreSimilar(a_low, b_low) then
+                        -- Merge b's non-empty fields into a
+                        if (a.role == nil or a.role == "") and b.role and b.role ~= "" then a.role = b.role end
+                        if (a.physical_description == nil or a.physical_description == "") and b.physical_description and b.physical_description ~= "" then a.physical_description = b.physical_description end
+                        if (a.personality == nil or a.personality == "") and b.personality and b.personality ~= "" then a.personality = b.personality end
+                        removed[j] = true
                     end
                 end
             end
@@ -105,17 +105,10 @@ local function findDuplicatePairs(characters)
     local pairs_found = {}
     for i = 1, #characters do
         for j = i + 1, #characters do
-            local a = characters[i].name or ""
-            local b = characters[j].name or ""
-            if #a >= 4 and #b >= 4 then
-                local dist      = levenshtein(a, b)
-                local threshold = math.min(#a, #b) <= 6 and 1 or 2
-                local a_low     = a:lower()
-                local b_low     = b:lower()
-                local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
-                if dist <= threshold or (substring and a_low ~= b_low) then
-                    table.insert(pairs_found, { a, b })
-                end
+            local a_low = (characters[i].name or ""):lower()
+            local b_low = (characters[j].name or ""):lower()
+            if namesAreSimilar(a_low, b_low) then
+                table.insert(pairs_found, { characters[i].name or "", characters[j].name or "" })
             end
         end
     end

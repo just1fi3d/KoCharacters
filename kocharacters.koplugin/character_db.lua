@@ -4,6 +4,7 @@
 local json        = require("dkjson")
 local DataStorage = require("datastorage")
 local util        = require("util")
+local logger      = require("logger")
 
 local _id_seq = 0
 local function generateId()
@@ -147,6 +148,7 @@ end
 
 -- Merge source character into target: combines fields, removes source
 function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
+    if source_name == target_name then return false end
     local characters = self:load(book_md5)
     local source, target, source_idx = nil, nil, nil
     for i, c in ipairs(characters) do
@@ -197,7 +199,11 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     target.user_notes             = merged_notes
 
     table.remove(characters, source_idx)
-    self:save(book_md5, characters)
+    local ok, err = self:save(book_md5, characters)
+    if not ok then
+        logger.warn("KoCharacters: mergeCharacters save failed: " .. tostring(err))
+        return false
+    end
     return true
 end
 
@@ -237,7 +243,11 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             if page_num then c.source_page = page_num end
             c.needs_cleanup = true
 
-            self:save(book_md5, characters)
+            local ok, err = self:save(book_md5, characters)
+            if not ok then
+                logger.warn("KoCharacters: enrichCharacter save failed: " .. tostring(err))
+                return false
+            end
             return true
         end
     end
@@ -251,7 +261,11 @@ function CharacterDB:updateCharacter(book_md5, original_name, updated_char)
         if c.name == original_name then
             updated_char.id = updated_char.id or c.id  -- preserve ID across updates
             characters[i] = updated_char
-            self:save(book_md5, characters)
+            local ok, err = self:save(book_md5, characters)
+            if not ok then
+                logger.warn("KoCharacters: updateCharacter save failed: " .. tostring(err))
+                return false
+            end
             return true
         end
     end
@@ -306,8 +320,10 @@ function CharacterDB:markPageScanned(book_md5, page_num)
     set[page_num] = true
     local list = {}
     for p in pairs(set) do table.insert(list, p) end
-    local f = io.open(self:scannedPath(book_md5), "w")
-    if f then f:write(json.encode(list)); f:close() end
+    local path = self:scannedPath(book_md5)
+    local f = io.open(path, "w")
+    if f then f:write(json.encode(list)); f:close()
+    else logger.warn("KoCharacters: could not write scanned pages to " .. path) end
 end
 
 -- Mark a range of pages as scanned in one file write
@@ -316,8 +332,10 @@ function CharacterDB:markPagesScanned(book_md5, from_page, to_page)
     for p = from_page, to_page do set[p] = true end
     local list = {}
     for p in pairs(set) do table.insert(list, p) end
-    local f = io.open(self:scannedPath(book_md5), "w")
-    if f then f:write(json.encode(list)); f:close() end
+    local path = self:scannedPath(book_md5)
+    local f = io.open(path, "w")
+    if f then f:write(json.encode(list)); f:close()
+    else logger.warn("KoCharacters: could not write scanned pages to " .. path) end
 end
 
 function CharacterDB:clearScannedPages(book_md5)
@@ -368,8 +386,10 @@ function CharacterDB:markPagePending(book_md5, page_num)
     local pages = self:loadPendingPages(book_md5)
     for _, p in ipairs(pages) do if p == page_num then return end end
     table.insert(pages, page_num)
-    local f = io.open(self:pendingPagesPath(book_md5), "w")
-    if f then f:write(json.encode(pages)); f:close() end
+    local path = self:pendingPagesPath(book_md5)
+    local f = io.open(path, "w")
+    if f then f:write(json.encode(pages)); f:close()
+    else logger.warn("KoCharacters: could not write pending pages to " .. path) end
 end
 
 -- Remove a list of page numbers from the pending list
@@ -383,8 +403,10 @@ function CharacterDB:removePendingPages(book_md5, pages_to_remove)
     if #new_list == 0 then
         os.remove(self:pendingPagesPath(book_md5))
     else
-        local f = io.open(self:pendingPagesPath(book_md5), "w")
-        if f then f:write(json.encode(new_list)); f:close() end
+        local path = self:pendingPagesPath(book_md5)
+        local f = io.open(path, "w")
+        if f then f:write(json.encode(new_list)); f:close()
+        else logger.warn("KoCharacters: could not write pending pages to " .. path) end
     end
 end
 
@@ -411,7 +433,8 @@ end
 function CharacterDB:saveBookContext(book_md5, context)
     local path = self:bookContextPath(book_md5)
     local f = io.open(path, "w")
-    if f then f:write(context); f:close() end
+    if f then f:write(context); f:close()
+    else logger.warn("KoCharacters: could not write book context to " .. path) end
 end
 
 return CharacterDB
