@@ -1320,9 +1320,14 @@ function KoCharacters:getCurrentPageText(override_page)
                         logger.info("KoCharacters: spine#" .. n .. " id=" .. tostring(item_id))
 
                         if item_id then
-                            local pat1 = [[item[^>]+href="([^"]+)"[^>]+id="]] .. item_id .. [["]]
-                            local pat2 = [[item[^>]+id="]] .. item_id .. [["[^>]+href="([^"]+)"]]
-                            local href = opf:match(pat2) or opf:match(pat1)
+                            -- Build manifest id->href table to avoid itemref/item pattern collision
+                            local manifest = {}
+                            for tag in opf:gmatch("<item%s[^>]+/>") do
+                                local id   = tag:match([[id="([^"]+)"]])
+                                local href = tag:match([[href="([^"]+)"]])
+                                if id and href then manifest[id] = href end
+                            end
+                            local href = manifest[item_id]
                             logger.info("KoCharacters: chapter href=" .. tostring(href))
 
                             if href then
