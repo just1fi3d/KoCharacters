@@ -189,7 +189,9 @@ function KoCharacters:init()
                     if highlight_instance.highlight_dialog then
                         UIManager:close(highlight_instance.highlight_dialog)
                     end
-                    self_ref:onWordCharacterLookup(word)
+                    UIManager:scheduleIn(0.1, function()
+                        self_ref:onWordCharacterLookup(word)
+                    end)
                 end,
             }
         end)
@@ -2260,6 +2262,8 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
             local dialog_ref = {}
             local function close_fn()
                 if dialog_ref[1] then UIManager:close(dialog_ref[1]) end
+                local Device = require("device")
+                UIManager:scheduleIn(0.1, function() Device.screen:refreshFull(0, 0, Device.screen:getWidth(), Device.screen:getHeight()) end)
             end
 
             local rows = make_buttons(close_fn)
@@ -2300,6 +2304,10 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
             html_widget.dialog = center
             dialog_ref[1]      = center
             UIManager:show(center)
+            UIManager:scheduleIn(0.3, function()
+                local Device = require("device")
+                Device.screen:refreshFull(0, 0, Device.screen:getWidth(), Device.screen:getHeight())
+            end)
             return
         end
     end
@@ -4341,96 +4349,7 @@ function KoCharacters:onWordCharacterLookup(word)
     end
 
     if #matches == 1 then
-        local char = matches[1]
-        local self_ref = self
-        local viewer
-        viewer = TextViewer:new{
-            title  = char.name,
-            text   = self:formatCharacter(char),
-            width  = math.floor(Screen:getWidth() * 0.9),
-            height = math.floor(Screen:getHeight() * 0.85),
-            buttons_table = {
-                {
-                    {
-                        text     = "Generate Portrait",
-                        callback = function()
-                            UIManager:close(viewer)
-                            self_ref:onGeneratePortrait(book_id, char)
-                        end,
-                    },
-                    {
-                        text     = "Merge into...",
-                        callback = function()
-                            UIManager:close(viewer)
-                            local others = {}
-                            for _, other in ipairs(self_ref.db:load(book_id)) do
-                                if other.name ~= char.name then
-                                    local other_name = other.name
-                                    table.insert(others, {
-                                        text     = other_name,
-                                        callback = function()
-                                            UIManager:show(ConfirmBox:new{
-                                                text        = 'Merge "' .. char.name .. '" into "' .. other_name .. '"?\n'
-                                                              .. 'Their info will be combined and "' .. char.name .. '" removed.',
-                                                ok_text     = "Merge",
-                                                ok_callback = function()
-                                                    self_ref.db:mergeCharacters(book_id, char.name, other_name)
-                                                    self_ref:showMsg('"' .. char.name .. '" merged into "' .. other_name .. '".', 3)
-                                                end,
-                                            })
-                                        end,
-                                    })
-                                end
-                            end
-                            UIManager:show(Menu:new{
-                                title       = 'Merge "' .. char.name .. '" into...',
-                                item_table  = others,
-                                width       = Screen:getWidth(),
-                                show_parent = self_ref.ui,
-                            })
-                        end,
-                    },
-                    {
-                        text     = "Delete Character",
-                        callback = function()
-                            UIManager:close(viewer)
-                            UIManager:show(ConfirmBox:new{
-                                text        = 'Delete "' .. char.name .. '" from the character list?',
-                                ok_text     = "Delete",
-                                ok_callback = function()
-                                    self_ref.db:deleteCharacter(book_id, char.name)
-                                    self_ref:showMsg(char.name .. " deleted.", 2)
-                                end,
-                            })
-                        end,
-                    },
-                },
-                {
-                    {
-                        text     = "Re-analyze",
-                        callback = function()
-                            UIManager:close(viewer)
-                            self_ref:onReanalyzeCharacter(book_id, char)
-                        end,
-                    },
-                    {
-                        text     = "Clean up",
-                        callback = function()
-                            UIManager:close(viewer)
-                            self_ref:onCleanCharacter(book_id, char.name)
-                        end,
-                    },
-                    {
-                        text     = "Edit",
-                        callback = function()
-                            UIManager:close(viewer)
-                            self_ref:onEditCharacter(book_id, char)
-                        end,
-                    },
-                },
-            },
-        }
-        UIManager:show(viewer)
+        self:showCharacterViewer(book_id, matches[1])
         return
     end
 
