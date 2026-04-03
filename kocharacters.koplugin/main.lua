@@ -2232,6 +2232,24 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
         }
     end
 
+    -- Text viewer fallback when HTML mode is disabled
+    if not G_reader_settings:readSetting("kocharacters_html_viewer") then
+        local self_ref = self
+        local viewer
+        viewer = TextViewer:new{
+            title  = char.name or "Character",
+            text   = self:formatCharacter(char),
+            width  = math.floor(Screen:getWidth() * 0.9),
+            height = math.floor(Screen:getHeight() * 0.85),
+            buttons_table = make_buttons(function()
+                UIManager:close(viewer)
+                if refresh_browser_fn then refresh_browser_fn() end
+            end),
+        }
+        UIManager:show(viewer)
+        return
+    end
+
     -- HTML viewer using ScrollHtmlWidget
     do
         local ok_s, ScrollHtmlWidget = pcall(require, "ui/widget/scrollhtmlwidget")
