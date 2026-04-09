@@ -1479,7 +1479,9 @@ function KoCharacters:formatCharacter(c)
 
     if c.first_appearance_quote and c.first_appearance_quote ~= "" then
         table.insert(lines, "")
-        table.insert(lines, "FIRST SEEN")
+        local seen_label = "FIRST SEEN"
+        if c.first_seen_page then seen_label = seen_label .. " (page " .. c.first_seen_page .. ")" end
+        table.insert(lines, seen_label)
         table.insert(lines, '"' .. c.first_appearance_quote .. '"')
     end
 
@@ -1584,7 +1586,9 @@ function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
         p[#p+1] = '<div class="section"><div class="label">Relationships</div><ul>' .. table.concat(items) .. '</ul></div>'
     end
     if char.first_appearance_quote and char.first_appearance_quote ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">First seen</div><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p></div>'
+        local seen_label = "First seen"
+        if char.first_seen_page then seen_label = seen_label .. " (page " .. tostring(char.first_seen_page) .. ")" end
+        p[#p+1] = '<div class="section"><div class="label">' .. seen_label .. '</div><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p></div>'
     end
     if char.user_notes and char.user_notes ~= "" then
         p[#p+1] = '<div class="section"><div class="label">My notes</div><p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p></div>'
@@ -2880,7 +2884,9 @@ function KoCharacters:onExportCharacters()
             p('<div class="field relationships"><label>Relationships</label><p>' .. table.concat(rel_parts, "<br>") .. '</p></div>')
         end
         if c.first_appearance_quote and c.first_appearance_quote ~= "" then
-            p('<div class="field"><label>First seen</label><p class="quote">&ldquo;' .. esc(c.first_appearance_quote) .. '&rdquo;</p></div>')
+            local seen_label = "First seen"
+            if c.first_seen_page then seen_label = seen_label .. " (page " .. esc(tostring(c.first_seen_page)) .. ")" end
+            p('<div class="field"><label>' .. seen_label .. '</label><p class="quote">&ldquo;' .. esc(c.first_appearance_quote) .. '&rdquo;</p></div>')
         end
         if c.user_notes and c.user_notes ~= "" then
             p('<div class="field" style="border-top:1px dashed #e0c97a;margin-top:10px;padding-top:10px;"><label>My notes</label><p style="white-space:pre-wrap;">' .. esc(c.user_notes) .. '</p></div>')
