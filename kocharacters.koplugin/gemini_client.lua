@@ -50,6 +50,12 @@ Rules:
 - For personality: infer stable character traits (e.g. "cautious", "hot-tempered", "fiercely loyal") from how characters act and react. Do NOT list events or actions — synthesize what those reveal about who they are.
 - For physical_description: summarise explicit appearance details only. Do not infer appearance from actions.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
+- For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
+- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage meaningfully changes or clarifies it. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary.
+- For defining_moments: only capture a "One-Way Door" event — one after which the character's status, body, or knowledge is permanently altered.
+    Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
+    Exclude: combat without consequence, travel, standard dialogue, temporary moods.
+  Each entry must be one sentence in past tense. Append new entries; never duplicate existing ones.
 
 Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
 {
@@ -58,10 +64,13 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
     {
       "name": "Full name or best available name",
       "aliases": ["nickname", "title"],
+      "identity_tags": ["Core faction, class, status, or demonstrated ability markers — e.g. 'Inquisition Member', 'Convicted Outlaw', 'Mistborn', 'Necromancer'. Distinct from occupation. Only include abilities the text explicitly establishes."],
       "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — empty string if unknown",
       "first_appearance_quote": "A short verbatim quote from the text where they first appear",
       "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
       "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
+      "motivation": "What drives this character at their core — their deepest goal, fear, or belief. Infer from choices and stated desires. Empty string if unknown.",
+      "defining_moments": ["A One-Way Door event that permanently altered this character's status, body, or knowledge — one sentence, past tense. Only include if this passage contains one."],
       "role": "protagonist or antagonist or supporting or unknown",
       "relationships": ["Relationship to other characters if mentioned"]
     }
@@ -88,6 +97,9 @@ Rules:
 - For personality: infer stable traits from how the character acts and reacts. Write a synthesised description ("reckless and fiercely loyal"), never a list of actions ("jumped off a bridge to save his friend").
 - For physical_description: merge explicit appearance details only. No action-based inferences.
 - Never append raw actions or scene summaries to any field.
+- For defining_moments: ask — is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? If yes, add one past-tense sentence. If no, do not add anything. Append only; never remove or duplicate existing entries.
+- For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). Otherwise preserve unchanged.
+- For motivation: enrich if the passage meaningfully clarifies or changes what the character wants or fears; otherwise preserve unchanged.
 
 If this character does not appear in the passage at all, return an empty JSON array: []
 
@@ -96,10 +108,13 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
   {
     "name": "Full name or best available name",
     "aliases": ["nickname", "title"],
+    "identity_tags": ["Core faction, class, status, or demonstrated ability markers"],
     "occupation": "Job title, profession, or social role — empty string if unknown",
     "first_appearance_quote": "Keep existing quote unless a better one is found in this passage",
     "physical_description": "Merged appearance summary — explicit descriptions only",
     "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
+    "motivation": "What drives this character at their core — stable goal, fear, or belief. Empty string if unknown.",
+    "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
     "role": "protagonist or antagonist or supporting or unknown",
     "relationships": ["Updated relationship list"]
   }
@@ -119,11 +134,17 @@ Clean up each text field:
 - Combine fragmented observations into a single fluent description
 - If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
 - Do not add new information not present in the original fields
+- For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
+- For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
+- For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
+  "identity_tags": ["..."],
   "physical_description": "...",
   "personality": "...",
+  "motivation": "...",
+  "defining_moments": ["..."],
   "relationships": ["..."],
   "role": "..."
 }
@@ -346,9 +367,12 @@ For each character, clean up the text fields:
 - Combine fragmented observations into fluent descriptions
 - If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
 - Do not add new information not present in the original fields
+- For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
+- For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
+- For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
-[{ "name": "...", "physical_description": "...", "personality": "...", "relationships": ["..."], "role": "..." }]
+[{ "name": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
 
 Character profiles to clean:
 %s

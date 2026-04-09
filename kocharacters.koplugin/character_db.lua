@@ -12,6 +12,19 @@ local function generateId()
     return tostring(os.time()) .. "_" .. tostring(_id_seq)
 end
 
+-- Union two arrays of strings, preserving order and deduplicating by value.
+local function unionArrays(a, b)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(a or {}) do
+        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
+    end
+    for _, v in ipairs(b or {}) do
+        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
+    end
+    return result
+end
+
 -- Merge two text fields: skip if one already contains the other (case-insensitive)
 local function mergeText(a, b)
     if not a or a == "" then return b or "" end
@@ -107,11 +120,13 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 local id         = existing[idx].id           -- preserve stable ID
                 local notes      = existing[idx].user_notes   -- never overwrite user notes
                 local first_seen = existing[idx].first_seen_page  -- set once, never updated
+                local prev_moments = existing[idx].defining_moments or {}
                 existing[idx] = c
                 existing[idx].id = id or generateId()
                 if notes      and notes ~= "" then existing[idx].user_notes      = notes      end
                 if first_seen                 then existing[idx].first_seen_page  = first_seen end
                 if page_num                   then existing[idx].source_page      = page_num   end
+                existing[idx].defining_moments = unionArrays(prev_moments, existing[idx].defining_moments)
                 changed = true
             else
                 c.id = generateId()
@@ -173,6 +188,20 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     local merged_rels = {}
     for r in pairs(rel_set) do table.insert(merged_rels, r) end
 
+    -- identity_tags: union of both
+    local tag_set = {}
+    for _, t in ipairs(target.identity_tags or {}) do if t ~= "" then tag_set[t] = true end end
+    for _, t in ipairs(source.identity_tags or {}) do if t ~= "" then tag_set[t] = true end end
+    local merged_tags = {}
+    for t in pairs(tag_set) do table.insert(merged_tags, t) end
+
+    -- defining_moments: union of both (append-only, preserve all distinct events)
+    local merged_moments = unionArrays(target.defining_moments, source.defining_moments)
+
+    -- motivation: prefer target's if set, otherwise take source's
+    local motivation = (target.motivation and target.motivation ~= "") and target.motivation
+                       or (source.motivation or "")
+
     -- Role: prefer a non-unknown value
     local role = target.role or "unknown"
     if (role == "unknown" or role == "") and source.role and source.role ~= "unknown" then
@@ -191,8 +220,11 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
                       or nil
 
     target.aliases                = merged_aliases
+    target.identity_tags          = merged_tags
     target.physical_description   = mergeText(target.physical_description, source.physical_description)
     target.personality            = mergeText(target.personality, source.personality)
+    target.motivation             = motivation
+    target.defining_moments       = merged_moments
     target.relationships          = merged_rels
     target.role                   = role
     target.first_appearance_quote = quote
@@ -227,14 +259,31 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             local merged_rels = {}
             for r in pairs(rel_set) do table.insert(merged_rels, r) end
 
+            -- identity_tags: union
+            local tag_set = {}
+            for _, t in ipairs(c.identity_tags    or {}) do if t ~= "" then tag_set[t] = true end end
+            for _, t in ipairs(extra.identity_tags or {}) do if t ~= "" then tag_set[t] = true end end
+            local merged_tags = {}
+            for t in pairs(tag_set) do table.insert(merged_tags, t) end
+
+            -- defining_moments: append incoming to existing (never overwrite)
+            local merged_moments = unionArrays(c.defining_moments, extra.defining_moments)
+
+            -- motivation: take extra's value only if current is empty
+            local motivation = (c.motivation and c.motivation ~= "") and c.motivation
+                               or (extra.motivation or "")
+
             local role = c.role or "unknown"
             if (role == "unknown" or role == "") and extra.role and extra.role ~= "unknown" then
                 role = extra.role
             end
 
             c.aliases              = merged_aliases
+            c.identity_tags        = merged_tags
             c.physical_description = mergeText(c.physical_description, extra.physical_description)
             c.personality          = mergeText(c.personality,          extra.personality)
+            c.motivation           = motivation
+            c.defining_moments     = merged_moments
             c.relationships        = merged_rels
             c.role                 = role
             if (not c.first_appearance_quote or c.first_appearance_quote == "") and extra.first_appearance_quote then

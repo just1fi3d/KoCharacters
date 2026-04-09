@@ -1439,6 +1439,26 @@ function KoCharacters:formatCharacter(c)
         table.insert(lines, c.occupation)
     end
 
+    if c.identity_tags and #c.identity_tags > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "IDENTITY")
+        table.insert(lines, table.concat(c.identity_tags, ", "))
+    end
+
+    if c.motivation and c.motivation ~= "" then
+        table.insert(lines, "")
+        table.insert(lines, "MOTIVATION")
+        table.insert(lines, c.motivation)
+    end
+
+    if c.defining_moments and #c.defining_moments > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "DEFINING MOMENTS")
+        for _, m in ipairs(c.defining_moments) do
+            table.insert(lines, "• " .. m)
+        end
+    end
+
     if c.physical_description and c.physical_description ~= "" then
         table.insert(lines, "")
         table.insert(lines, "APPEARANCE")
@@ -1539,6 +1559,19 @@ function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
     end
 
     -- Body sections
+    if char.identity_tags and #char.identity_tags > 0 then
+        local items = {}
+        for _, t in ipairs(char.identity_tags) do items[#items+1] = '<li>' .. esc(t) .. '</li>' end
+        p[#p+1] = '<div class="section"><div class="label">Identity</div><ul>' .. table.concat(items) .. '</ul></div>'
+    end
+    if char.motivation and char.motivation ~= "" then
+        p[#p+1] = '<div class="section"><div class="label">Motivation</div><p>' .. esc(char.motivation) .. '</p></div>'
+    end
+    if char.defining_moments and #char.defining_moments > 0 then
+        local items = {}
+        for _, m in ipairs(char.defining_moments) do items[#items+1] = '<li>' .. esc(m) .. '</li>' end
+        p[#p+1] = '<div class="section"><div class="label">Defining Moments</div><ul>' .. table.concat(items) .. '</ul></div>'
+    end
     if char.physical_description and char.physical_description ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Appearance</div><p>' .. esc(char.physical_description) .. '</p></div>'
     end
@@ -2821,6 +2854,19 @@ function KoCharacters:onExportCharacters()
         end
         if c.aliases and #c.aliases > 0 then
             p('<div class="field aliases"><label>Also known as</label><p>' .. esc(table.concat(c.aliases, ", ")) .. '</p></div>')
+        end
+        if c.identity_tags and #c.identity_tags > 0 then
+            local tag_parts = {}
+            for _, t in ipairs(c.identity_tags) do table.insert(tag_parts, esc(t)) end
+            p('<div class="field"><label>Identity</label><p>' .. table.concat(tag_parts, ", ") .. '</p></div>')
+        end
+        if c.motivation and c.motivation ~= "" then
+            p('<div class="field"><label>Motivation</label><p>' .. esc(c.motivation) .. '</p></div>')
+        end
+        if c.defining_moments and #c.defining_moments > 0 then
+            local moment_parts = {}
+            for _, m in ipairs(c.defining_moments) do table.insert(moment_parts, esc(m)) end
+            p('<div class="field"><label>Defining Moments</label><p>' .. table.concat(moment_parts, "<br>") .. '</p></div>')
         end
         if c.physical_description and c.physical_description ~= "" then
             p('<div class="field"><label>Appearance</label><p>' .. esc(c.physical_description) .. '</p></div>')
