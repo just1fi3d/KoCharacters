@@ -34,7 +34,9 @@ You are analyzing a passage from a novel or book.
 
 Your tasks:
 1. Extract any NEW named characters who are introduced or significantly described in this passage.
-2. Update the profiles of EXISTING characters (listed below) who appear in this passage — preserve all existing fields and enrich them with any new information found.
+2. Update the profiles of EXISTING characters (listed below) who appear in this passage.
+   - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments.
+   - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Existing character profiles to UPDATE (return updated profile only if they appear in this passage):
 {{existing}}
@@ -44,11 +46,11 @@ Characters to SKIP entirely (do not return these):
 
 Rules:
 - Only include characters who have a name (first name, last name, or title+name). Skip unnamed background figures.
-- For existing characters: only return them if they actually appear in this passage. Preserve existing data and add/improve any fields.
+- For existing characters: only return them if they actually appear in this passage.
 - For new characters: only include if there is enough information to build a meaningful profile.
 - If there is nothing to report, return an empty JSON array: []
-- For personality: infer stable character traits (e.g. "cautious", "hot-tempered", "fiercely loyal") from how characters act and react. Do NOT list events or actions — synthesize what those reveal about who they are.
-- For physical_description: summarise explicit appearance details only. Do not infer appearance from actions.
+- For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 - For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
 - For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage meaningfully changes or clarifies it. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary.
@@ -91,11 +93,13 @@ You are updating the profile of a specific character in a novel based on a new p
 The character to update is:
 {{character}}
 
-Read the passage below and enrich the character's profile with any new information. For personality and physical_description, merge new observations into the existing description — synthesising a coherent summary, not appending new events. Preserve all existing data; only add or improve.
+Read the passage below and update the character's profile.
+- Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments.
+- Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Rules:
-- For personality: infer stable traits from how the character acts and reacts. Write a synthesised description ("reckless and fiercely loyal"), never a list of actions ("jumped off a bridge to save his friend").
-- For physical_description: merge explicit appearance details only. No action-based inferences.
+- For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Do NOT append. Never list events or actions.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences.
 - Never append raw actions or scene summaries to any field.
 - For defining_moments: ask — is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? If yes, add one past-tense sentence. If no, do not add anything. Append only; never remove or duplicate existing entries.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). Otherwise preserve unchanged.
