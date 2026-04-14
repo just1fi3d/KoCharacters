@@ -173,6 +173,11 @@ function KoCharacters:init()
     self.db               = CharacterDB
     self._auto_extracting = false
     self._pending_extract = nil
+    self._extract_queue   = {}
+    self._extract_running = false
+    self._poll_timer      = nil
+    self._curl_req_file   = nil
+    self._curl_resp_file  = nil
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
@@ -297,15 +302,20 @@ function KoCharacters:_onPageChanged(pageno)
     if not book_id then return end
     if self.db:isPageScanned(book_id, pageno) then return end
 
+    -- If an async extraction is in progress, re-render its indicator so it
+    -- survives the e-ink page-turn refresh that may have painted over it.
+    if self._extract_running and self._scan_indicator then
+        UIManager:setDirty(self._scan_indicator, "fast")
+    end
+
     -- Debounce: wait N seconds before extracting so rapid page flips don't
-    -- trigger a cascade of blocking API calls
+    -- trigger a cascade of API calls
     local delay = G_reader_settings:readSetting("kocharacters_auto_extract_delay") or 10
     self._pending_extract = function()
         self._pending_extract = nil
-        if self._auto_extracting then return end
         -- Only extract if the user is still on this page
         if self:getCurrentPage() ~= pageno then return end
-        self:autoExtract(pageno)
+        self:_enqueueExtract(pageno)
     end
     UIManager:scheduleIn(delay, self._pending_extract)
 end
@@ -431,6 +441,200 @@ function KoCharacters:autoExtract(page_num)
         self:showExtractedCount(#characters)
         self:_checkAndPromptPendingPages(book_id)
     end, cur_page, true)
+end
+
+function KoCharacters:_enqueueExtract(pageno)
+    local book_id = self:getBookID()
+    if not book_id then return end
+    if self.db:isPageScanned(book_id, pageno) then return end
+
+    -- Avoid duplicate entries in the queue
+    for _, p in ipairs(self._extract_queue) do
+        if p == pageno then return end
+    end
+
+    table.insert(self._extract_queue, pageno)
+    if not self._extract_running then
+        self:_processNextInQueue()
+    end
+end
+
+function KoCharacters:_processNextInQueue()
+    if #self._extract_queue == 0 then
+        self._extract_running = false
+        self:hideScanIndicator()
+        return
+    end
+
+    local api_key = self:getApiKey()
+    if api_key == "" then
+        self._extract_queue   = {}
+        self._extract_running = false
+        return
+    end
+
+    self._extract_running = true
+    local pageno  = table.remove(self._extract_queue, 1)
+    local book_id = self:getBookID()
+    if not book_id then self:_processNextInQueue(); return end
+
+    -- Re-check: page may have been scanned by a previous queue item
+    if self.db:isPageScanned(book_id, pageno) then
+        self:_processNextInQueue()
+        return
+    end
+
+    local page_text, err = self:getCurrentPageText(pageno)
+    if not page_text or #page_text < 20 then
+        self.db:markPageScanned(book_id, pageno)
+        self:_processNextInQueue()
+        return
+    end
+
+    -- Build existing/skip lists (same logic as autoExtract)
+    local existing   = self.db:load(book_id)
+    local page_lower = page_text:lower()
+    local skip_names, chars_in_text = {}, {}
+    for _, c in ipairs(existing) do
+        local found = page_lower:find((c.name or ""):lower(), 1, true)
+        if not found and c.aliases then
+            for _, alias in ipairs(c.aliases) do
+                if alias ~= "" and page_lower:find(alias:lower(), 1, true) then
+                    found = true; break
+                end
+            end
+        end
+        if found then table.insert(chars_in_text, c)
+        else table.insert(skip_names, c.name) end
+    end
+
+    -- Write request file
+    local DataStorage   = require("datastorage")
+    local tmp_dir       = DataStorage:getDataDir() .. "/kocharacters"
+    self._curl_req_file  = tmp_dir .. "/.async_req_"  .. tostring(pageno) .. ".json"
+    self._curl_resp_file = tmp_dir .. "/.async_resp_" .. tostring(pageno) .. ".json"
+    os.remove(self._curl_resp_file)  -- ensure no stale response
+
+    local client = GeminiClient:new(api_key)
+    local ok, build_err = client:buildRequestFile(
+        self._curl_req_file, page_text, skip_names, chars_in_text,
+        self:getExtractionPrompt(), self.db:loadBookContext(book_id))
+
+    if not ok then
+        logger.warn("KoCharacters: async buildRequestFile failed: " .. tostring(build_err))
+        self.db:markPageScanned(book_id, pageno)
+        self:_processNextInQueue()
+        return
+    end
+
+    -- Launch a background luajit subprocess to perform the HTTPS request.
+    -- curl is not available on this Kindle, so we use KOReader's own luajit
+    -- binary with ssl.https.  We cd to the KOReader base dir first so that
+    -- setupkoenv.lua's relative package paths resolve correctly.
+    local url        = client:asyncExtractUrl()
+    local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
+    local helper     = plugin_dir .. "async_request.lua"
+    local lua_cmd    = string.format(
+        'cd /mnt/us/koreader && ./luajit "%s" "%s" "%s" "%s" >/dev/null 2>&1 &',
+        helper, self._curl_req_file, url, self._curl_resp_file)
+    logger.info("KoCharacters: async launch page=" .. tostring(pageno))
+    os.execute(lua_cmd)
+
+    self:showScanIndicator()
+
+    -- Begin polling
+    local poll_start   = os.time()
+    local poll_timeout = 35  -- slightly longer than curl --max-time
+    local page_ref     = pageno
+    local book_ref     = book_id
+    local resp_file    = self._curl_resp_file
+    local req_file     = self._curl_req_file
+    local self_ref     = self
+
+    local function poll()
+        self_ref._poll_timer = nil
+
+        if os.time() - poll_start > poll_timeout then
+            logger.warn("KoCharacters: async poll timeout for page " .. tostring(page_ref))
+            os.remove(req_file)
+            os.remove(resp_file)
+            self_ref.db:markPagePending(book_ref, page_ref)
+            self_ref:_processNextInQueue()
+            return
+        end
+
+        -- Check if response file exists and is non-empty
+        local f = io.open(resp_file, "r")
+        if not f then
+            self_ref._poll_timer = function() poll() end
+            UIManager:scheduleIn(1.5, self_ref._poll_timer)
+            return
+        end
+        local size = f:seek("end")
+        f:close()
+        if not size or size == 0 then
+            self_ref._poll_timer = function() poll() end
+            UIManager:scheduleIn(1.5, self_ref._poll_timer)
+            return
+        end
+
+        -- Response is ready — parse it
+        logger.info("KoCharacters: async response ready page=" .. tostring(page_ref) .. " size=" .. tostring(size))
+        os.remove(req_file)
+        local characters, api_err, usage, book_context = client:parseResponseFile(resp_file)
+        os.remove(resp_file)
+
+        if api_err then
+            logger.warn("KoCharacters: async api_err page=" .. tostring(page_ref) .. ": " .. tostring(api_err))
+            local is_retryable = type(api_err) == "string"
+                and (api_err:find("Network error") or api_err:find("503") or api_err:find("429") or api_err:find("quota") or api_err:find("high demand") or api_err:find("overload"))
+            if is_retryable then
+                self_ref.db:markPagePending(book_ref, page_ref)
+                self_ref:showExtractError()
+            else
+                self_ref.db:markPageScanned(book_ref, page_ref)
+            end
+            self_ref:_processNextInQueue()
+            return
+        end
+
+        if usage then self_ref:recordUsage(usage) end
+        if book_context and book_context ~= "" then
+            self_ref.db:saveBookContext(book_ref, book_context)
+        end
+
+        self_ref.db:markPageScanned(book_ref, page_ref)
+
+        if not characters or #characters == 0 then
+            self_ref:showExtractedCount(0)
+            self_ref:_checkAndPromptPendingPages(book_ref)
+            self_ref:_processNextInQueue()
+            return
+        end
+
+        self_ref:handleIncomingConflicts(book_ref, characters, function(resolved)
+            if #resolved > 0 then
+                self_ref.db:merge(book_ref, resolved, page_ref)
+            end
+            self_ref:showExtractedCount(#characters)
+            self_ref:_checkAndPromptPendingPages(book_ref)
+            self_ref:_processNextInQueue()
+        end, page_ref, true)
+    end
+
+    self._poll_timer = function() poll() end
+    UIManager:scheduleIn(1.5, self._poll_timer)
+end
+
+function KoCharacters:onCloseDocument()
+    if self._poll_timer then
+        UIManager:unschedule(self._poll_timer)
+        self._poll_timer = nil
+    end
+    if self._curl_req_file  then os.remove(self._curl_req_file);  self._curl_req_file  = nil end
+    if self._curl_resp_file then os.remove(self._curl_resp_file); self._curl_resp_file = nil end
+    self._extract_queue   = {}
+    self._extract_running = false
 end
 
 function KoCharacters:_checkAndPromptPendingPages(book_id)
@@ -651,6 +855,9 @@ function KoCharacters:showScanIndicator()
     local Blitbuffer     = require("ffi/blitbuffer")
     local icon_path      = debug.getinfo(1, "S").source:sub(2):match("(.+/)") .. "assets/scanning.svg"
     self._scan_indicator = FrameContainer:new{
+        -- toast = true: UIManager never stops event propagation for toast widgets,
+        -- so page turns and all gestures pass straight through to the reader.
+        toast      = true,
         background = Blitbuffer.COLOR_WHITE,
         bordersize = 0,
         padding    = 4,
@@ -689,6 +896,7 @@ function KoCharacters:showExtractedCount(count)
     local Blitbuffer       = require("ffi/blitbuffer")
     local plugin_dir       = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
     self._count_indicator = FrameContainer:new{
+        toast      = true,
         background = Blitbuffer.COLOR_WHITE,
         bordersize = 0,
         padding    = 4,
@@ -700,6 +908,45 @@ function KoCharacters:showExtractedCount(count)
             },
             TextWidget:new{
                 text = tostring(count),
+                face = Font:getFace("cfont", 20),
+            },
+        },
+    }
+    UIManager:show(self._count_indicator)
+    UIManager:setDirty(self._count_indicator, "fast")
+    UIManager:forceRePaint()
+    self._count_indicator_timer = function()
+        self._count_indicator_timer = nil
+        if self._count_indicator then
+            UIManager:close(self._count_indicator)
+            UIManager:setDirty(nil, "fast")
+            UIManager:forceRePaint()
+            self._count_indicator = nil
+        end
+    end
+    UIManager:scheduleIn(4, self._count_indicator_timer)
+end
+
+function KoCharacters:showExtractError()
+    if self._count_indicator then
+        UIManager:close(self._count_indicator)
+        if self._count_indicator_timer then
+            UIManager:unschedule(self._count_indicator_timer)
+        end
+    end
+    local FrameContainer  = require("ui/widget/container/framecontainer")
+    local HorizontalGroup = require("ui/widget/horizontalgroup")
+    local TextWidget      = require("ui/widget/textwidget")
+    local Font            = require("ui/font")
+    local Blitbuffer      = require("ffi/blitbuffer")
+    self._count_indicator = FrameContainer:new{
+        toast      = true,
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 0,
+        padding    = 4,
+        HorizontalGroup:new{
+            TextWidget:new{
+                text = "⚠ API busy",
                 face = Font:getFace("cfont", 20),
             },
         },
@@ -1865,10 +2112,12 @@ function KoCharacters:onExtractCurrentPage()
         end
 
         local cur_page = self:getCurrentPage()
+        self.db:markPageScanned(book_id, cur_page)
         self:handleIncomingConflicts(book_id, characters, function(resolved)
             if #resolved > 0 then
                 self.db:merge(book_id, resolved, cur_page)
             end
+            self:_checkAndPromptPendingPages(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
                 table.insert(parts, self:formatCharacter(c))

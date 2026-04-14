@@ -1,6 +1,6 @@
 -- gemini_client.lua
 -- Handles all communication with the Google Gemini API (free tier)
--- Model: gemini-1.5-flash — free at aistudio.google.com
+-- Model: gemini-3.1-flash-lite-preview — free at aistudio.google.com
 
 local json  = require("dkjson")
 local https = require("ssl.https")
@@ -192,6 +192,96 @@ local function stripCodeFences(text)
     return stripped:match("^%s*(.-)%s*$")  -- trim whitespace
 end
 
+-- Parse a raw Gemini response body string; returns characters, nil, usage, book_context or nil, err
+function GeminiClient:_parseResponseBody(raw)
+    local parsed, _, err = json.decode(raw)
+    if not parsed then
+        return nil, "Failed to parse Gemini response: " .. tostring(err)
+    end
+
+    if type(parsed) == "table" and parsed.error then
+        local status_code = parsed.error.code or "?"
+        local detail = parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status_code) .. "): " .. detail
+    end
+
+    -- Navigate to the text content
+    -- Structure: parsed.candidates[1].content.parts[1].text
+    local text
+    if parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1] then
+        text = parsed.candidates[1].content.parts[1].text
+    end
+
+    if not text or text == "" then
+        local reason = parsed.candidates
+            and parsed.candidates[1]
+            and parsed.candidates[1].finishReason
+            or "unknown"
+        return nil, "Gemini returned no text content. Finish reason: " .. reason
+    end
+
+    text = stripCodeFences(text)
+
+    local result, _, jerr = json.decode(text)
+    if not result then
+        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
+    end
+
+    -- Support both new object format {characters, book_context} and legacy bare array
+    local characters, book_context
+    if type(result) == "table" and result.characters then
+        characters   = result.characters
+        book_context = result.book_context
+    elseif type(result) == "table" and not result.characters then
+        characters = result
+    else
+        return nil, "Expected a JSON object or array, got: " .. type(result)
+    end
+
+    if type(characters) ~= "table" then
+        characters = {}
+    end
+
+    return characters, nil, extractUsage(parsed), book_context
+end
+
+-- Write request JSON to path for async curl use; returns true or nil, err
+function GeminiClient:buildRequestFile(path, page_text, skip_names, existing_characters, template, book_context)
+    local prompt = self:buildPrompt(page_text, skip_names, existing_characters, template, book_context)
+    local request_body = json.encode({
+        contents = {
+            { parts = { { text = prompt } } }
+        },
+        generationConfig = {
+            temperature     = 0.2,
+            maxOutputTokens = 8192,
+        }
+    })
+    local f = io.open(path, "w")
+    if not f then return nil, "Could not write request file: " .. path end
+    f:write(request_body)
+    f:close()
+    return true
+end
+
+-- Read and parse a curl response file; returns characters, nil, usage, book_context or nil, err
+function GeminiClient:parseResponseFile(path)
+    local f = io.open(path, "r")
+    if not f then return nil, "Response file not found: " .. path end
+    local raw = f:read("*a")
+    f:close()
+    return self:_parseResponseBody(raw)
+end
+
+-- Returns the full extraction API URL with key for use in async curl commands
+function GeminiClient:asyncExtractUrl()
+    return API_BASE .. "?key=" .. self.api_key
+end
+
 -- Send request to Gemini and return parsed character list or error
 function GeminiClient:extractCharacters(page_text, skip_names, existing_characters, extraction_prompt, book_context)
     if not self.api_key or self.api_key == "" then
@@ -241,59 +331,7 @@ function GeminiClient:extractCharacters(page_text, skip_names, existing_characte
         return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
     end
 
-    -- Parse the outer Gemini response envelope
-    local raw = table.concat(response_body)
-    local parsed, _, err = json.decode(raw)
-    if not parsed then
-        return nil, "Failed to parse Gemini response: " .. tostring(err)
-    end
-
-    -- Navigate to the text content
-    -- Structure: parsed.candidates[1].content.parts[1].text
-    local text
-    if parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1] then
-        text = parsed.candidates[1].content.parts[1].text
-    end
-
-    if not text or text == "" then
-        -- Check for safety blocks or other finish reasons
-        local reason = parsed.candidates
-            and parsed.candidates[1]
-            and parsed.candidates[1].finishReason
-            or "unknown"
-        return nil, "Gemini returned no text content. Finish reason: " .. reason
-    end
-
-    -- Strip any accidental code fences
-    text = stripCodeFences(text)
-
-    -- Parse the JSON object Gemini returned
-    local result, _, jerr = json.decode(text)
-    if not result then
-        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
-    end
-
-    -- Support both new object format {characters, book_context} and legacy bare array
-    local characters, book_context
-    if type(result) == "table" and result.characters then
-        characters   = result.characters
-        book_context = result.book_context
-    elseif type(result) == "table" and not result.characters then
-        -- bare array (legacy or fallback)
-        characters = result
-    else
-        return nil, "Expected a JSON object or array, got: " .. type(result)
-    end
-
-    if type(characters) ~= "table" then
-        characters = {}
-    end
-
-    return characters, nil, extractUsage(parsed), book_context
+    return self:_parseResponseBody(table.concat(response_body))
 end
 
 -- Re-analyze a single known character against a new page passage
