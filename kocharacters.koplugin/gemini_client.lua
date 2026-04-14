@@ -58,6 +58,7 @@ Rules:
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
     Exclude: combat without consequence, travel, standard dialogue, temporary moods.
   Each entry must be one sentence in past tense. Append new entries; never duplicate existing ones.
+- For relationships: format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
 
 Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
 {
@@ -74,7 +75,7 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
       "motivation": "What drives this character at their core — their deepest goal, fear, or belief. Infer from choices and stated desires. Empty string if unknown.",
       "defining_moments": ["A One-Way Door event that permanently altered this character's status, body, or knowledge — one sentence, past tense. Only include if this passage contains one."],
       "role": "protagonist or antagonist or supporting or unknown",
-      "relationships": ["Relationship to other characters if mentioned"]
+      "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\", \"Kira (rival)\". One entry per named person."]
     }
   ]
 }
@@ -120,7 +121,7 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "motivation": "What drives this character at their core — stable goal, fear, or belief. Empty string if unknown.",
     "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
     "role": "protagonist or antagonist or supporting or unknown",
-    "relationships": ["Updated relationship list"]
+    "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\". One entry per named person."]
   }
 ]
 
@@ -141,6 +142,7 @@ Clean up each text field:
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
+- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing.
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
@@ -412,6 +414,7 @@ For each character, clean up the text fields:
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
+- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing.
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
 [{ "name": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]

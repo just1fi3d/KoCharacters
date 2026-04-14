@@ -194,6 +194,9 @@ function KoCharacters:init()
                     if highlight_instance.highlight_dialog then
                         UIManager:close(highlight_instance.highlight_dialog)
                     end
+                    -- Clear the text selection so it doesn't show the highlight menu
+                    -- again after the character viewer is closed.
+                    pcall(function() highlight_instance:clear() end)
                     UIManager:scheduleIn(0.1, function()
                         self_ref:onWordCharacterLookup(word)
                     end)
@@ -591,6 +594,7 @@ function KoCharacters:_processNextInQueue()
             if is_retryable then
                 self_ref.db:markPagePending(book_ref, page_ref)
                 self_ref:showExtractError()
+                self_ref:appendActivityLog(book_ref, "Auto-extract p." .. page_ref .. ": API busy — will retry")
             else
                 self_ref.db:markPageScanned(book_ref, page_ref)
             end
@@ -616,6 +620,7 @@ function KoCharacters:_processNextInQueue()
             if #resolved > 0 then
                 self_ref.db:merge(book_ref, resolved, page_ref)
             end
+            self_ref:appendActivityLog(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found")
             self_ref:showExtractedCount(#characters)
             self_ref:_checkAndPromptPendingPages(book_ref)
             self_ref:_processNextInQueue()
@@ -837,6 +842,10 @@ function KoCharacters:addToMainMenu(menu_items)
                 end,
             },
             {
+                text     = _("Activity log"),
+                callback = function() self:onViewActivityLog() end,
+            },
+            {
                 text     = _("Settings..."),
                 callback = function() self:onOpenSettings() end,
             },
@@ -970,6 +979,48 @@ function KoCharacters:showMsg(text, timeout)
     UIManager:show(InfoMessage:new{
         text    = text,
         timeout = timeout or 4,
+    })
+end
+
+function KoCharacters:appendActivityLog(book_id, message)
+    if not book_id then return end
+    local DataStorage = require("datastorage")
+    local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id
+    local util = require("util")
+    util.makePath(dir)
+    local f = io.open(dir .. "/activity.log", "a")
+    if not f then return end
+    f:write("[" .. os.date("%Y-%m-%d %H:%M") .. "] " .. message .. "\n")
+    f:close()
+end
+
+function KoCharacters:onViewActivityLog()
+    local book_id = self:getBookID()
+    if not book_id then
+        self:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+    local DataStorage = require("datastorage")
+    local log_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/activity.log"
+    local f = io.open(log_path, "r")
+    if not f then
+        self:showMsg("No activity logged yet for this book.", 3)
+        return
+    end
+    local lines = {}
+    for line in f:lines() do table.insert(lines, line) end
+    f:close()
+    if #lines == 0 then
+        self:showMsg("Activity log is empty.", 3)
+        return
+    end
+    local reversed = {}
+    for i = #lines, 1, -1 do table.insert(reversed, lines[i]) end
+    UIManager:show(TextViewer:new{
+        title  = "Activity Log — " .. self:getBookTitle(),
+        text   = table.concat(reversed, "\n"),
+        width  = math.floor(Screen:getWidth() * 0.9),
+        height = math.floor(Screen:getHeight() * 0.85),
     })
 end
 
@@ -2117,6 +2168,7 @@ function KoCharacters:onExtractCurrentPage()
             if #resolved > 0 then
                 self.db:merge(book_id, resolved, cur_page)
             end
+            self:appendActivityLog(book_id, "Manual extract p." .. cur_page .. ": " .. #characters .. " character(s) found")
             self:_checkAndPromptPendingPages(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
@@ -2337,6 +2389,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
         end
 
         self_ref.db:clearPendingCleanup(book_id)
+        self_ref:appendActivityLog(book_id, "Chapter scan pp." .. start_page .. "-" .. end_page .. ": " .. total_found .. " character(s) found")
         self_ref:showMsg(
             "Chapter scan complete.\n"
             .. "Batches: " .. total_batches .. " (".. page_count .. " pages, " .. PAGES_PER_BATCH .. " per batch)\n"
@@ -3563,6 +3616,7 @@ function KoCharacters:onCleanupAllCharacters()
 
         if changed then self_ref.db:save(book_id, all_chars) end
         self_ref.db:clearPendingCleanup(book_id)
+        self_ref:appendActivityLog(book_id, "Cleanup all: " .. total .. " character(s) cleaned")
         if G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") then
             runMergeDetection()
         else
@@ -3687,6 +3741,9 @@ function KoCharacters:onMergeDetection()
 
     local function applyNext()
         if group_idx > #valid_groups then
+            if merged_count > 0 then
+                self_ref:appendActivityLog(book_id, "Merged " .. merged_count .. " duplicate(s)")
+            end
             local msg = merged_count > 0
                 and (merged_count .. " character(s) merged.")
                 or  "No characters merged."
@@ -4474,7 +4531,9 @@ function KoCharacters:onReanalyzeCharacter(book_id, char)
         return
     end
 
-    self.db:merge(book_id, characters, self:getCurrentPage())
+    local reanalyze_page = self:getCurrentPage()
+    self.db:merge(book_id, characters, reanalyze_page)
+    self:appendActivityLog(book_id, 'Re-analyzed "' .. char.name .. '" (p.' .. (reanalyze_page or "?") .. ")")
     self:showMsg('"' .. char.name .. '" updated.', 3)
 end
 
@@ -4554,6 +4613,7 @@ function KoCharacters:onCleanCharacter(book_id, char_name)
     char.needs_cleanup = nil
 
     self.db:updateCharacter(book_id, char_name, char)
+    self:appendActivityLog(book_id, 'Cleaned up "' .. char_name .. '"')
     self:showMsg('"' .. char_name .. '" cleaned up.', 3)
 end
 
