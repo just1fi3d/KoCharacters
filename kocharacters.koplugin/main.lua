@@ -1825,6 +1825,7 @@ function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
         "ul li{margin-bottom:3px;}",
         ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
         ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
+        "a{color:#333;text-decoration:underline;}",
     })
     local p = {}
 
@@ -1880,7 +1881,14 @@ function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
     end
     if char.relationships and #char.relationships > 0 then
         local items = {}
-        for _, r in ipairs(char.relationships) do items[#items+1] = '<li>' .. esc(r) .. '</li>' end
+        for _, r in ipairs(char.relationships) do
+            local rel_name, rel_type = r:match("^(.-)%s*%((.-)%)%s*$")
+            if rel_name and rel_name ~= "" then
+                items[#items+1] = '<li><a href="char:' .. esc(rel_name) .. '">' .. esc(rel_name) .. '</a> (' .. esc(rel_type) .. ')</li>'
+            else
+                items[#items+1] = '<li>' .. esc(r) .. '</li>'
+            end
+        end
         p[#p+1] = '<div class="section"><div class="label">Relationships</div><ul>' .. table.concat(items) .. '</ul></div>'
     end
     if char.first_appearance_quote and char.first_appearance_quote ~= "" then
@@ -2633,12 +2641,40 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
             local btable_h = btable:getSize().h
             local inner_h  = h - 2*border
 
+            local function charLinkCallback(link)
+                local link_url = type(link) == "table" and (link.uri or "") or tostring(link)
+                if link_url:sub(1, 5) ~= "char:" then return end
+                local link_name = (link_url:sub(6):match("^%s*(.-)%s*$") or ""):lower()
+                if link_name == "" then return end
+                local found
+                for _, c in ipairs(self_ref.db:load(book_id)) do
+                    local cname = (c.name or ""):lower()
+                    if cname:find(link_name, 1, true) or link_name:find(cname, 1, true) then
+                        found = c; break
+                    end
+                    for _, alias in ipairs(c.aliases or {}) do
+                        local al = alias:lower()
+                        if al:find(link_name, 1, true) or link_name:find(al, 1, true) then
+                            found = c; break
+                        end
+                    end
+                    if found then break end
+                end
+                if found then
+                    close_fn()
+                    UIManager:scheduleIn(0.15, function()
+                        self_ref:showCharacterViewer(book_id, found, sort_mode, query, refresh_browser_fn)
+                    end)
+                end
+            end
+
             local html_widget = ScrollHtmlWidget:new{
                 html_body               = html_body,
                 css                     = html_css,
                 html_resource_directory = portraits_dir,
                 width                   = inner_w,
                 height                  = inner_h - btable_h,
+                html_link_tapped_callback = charLinkCallback,
             }
 
             local frame = FrameContainer:new{
