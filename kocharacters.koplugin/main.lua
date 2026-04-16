@@ -4,9 +4,6 @@
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager       = require("ui/uimanager")
 local InfoMessage     = require("ui/widget/infomessage")
-local InputDialog     = require("ui/widget/inputdialog")
-local TextViewer      = require("ui/widget/textviewer")
-local ConfirmBox      = require("ui/widget/confirmbox")
 local Menu            = require("ui/widget/menu")
 local Screen          = require("device").screen
 local logger          = require("logger")
@@ -330,33 +327,7 @@ function KoCharacters:appendActivityLog(book_id, message)
 end
 
 function KoCharacters:onViewActivityLog()
-    local book_id = self:getBookID()
-    if not book_id then
-        self:showMsg("Cannot identify book — is a document open?")
-        return
-    end
-    local DataStorage = require("datastorage")
-    local log_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/activity.log"
-    local f = io.open(log_path, "r")
-    if not f then
-        self:showMsg("No activity logged yet for this book.", 3)
-        return
-    end
-    local lines = {}
-    for line in f:lines() do table.insert(lines, line) end
-    f:close()
-    if #lines == 0 then
-        self:showMsg("Activity log is empty.", 3)
-        return
-    end
-    local reversed = {}
-    for i = #lines, 1, -1 do table.insert(reversed, lines[i]) end
-    UIManager:show(TextViewer:new{
-        title  = "Activity Log — " .. self:getBookTitle(),
-        text   = table.concat(reversed, "\n"),
-        width  = math.floor(Screen:getWidth() * 0.9),
-        height = math.floor(Screen:getHeight() * 0.85),
-    })
+    UIBrowser.onViewActivityLog(self)
 end
 
 -- duplicate/conflict handling moved to ui_browser.lua
@@ -438,99 +409,11 @@ function KoCharacters:recordUsage(usage)
 end
 
 function KoCharacters:onViewRelationshipMap()
-    local api_key = self:getApiKey()
-    if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
-        return
-    end
-
-    local book_id = self:getBookID()
-    if not book_id then
-        self:showMsg("Cannot identify book — is a document open?")
-        return
-    end
-
-    local characters = self.db:load(book_id)
-    if #characters < 2 then
-        self:showMsg("Need at least 2 saved characters to build a relationship map.")
-        return
-    end
-
-    local working_msg = InfoMessage:new{ text = "Building relationship map..." }
-    UIManager:show(working_msg)
-    UIManager:forceRePaint()
-
-    local client = GeminiClient:new(api_key)
-    local map_text, err, usage
-    local ok, call_err = pcall(function()
-        map_text, err, usage = client:buildRelationshipMap(characters, self:getRelationshipMapPrompt())
-    end)
-
-    UIManager:close(working_msg)
-    if ok and not err then self:recordUsage(usage) end
-
-    if not ok then
-        self:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-        return
-    end
-    if err then
-        self:showMsg("Gemini error:\n" .. tostring(err), 8)
-        return
-    end
-
-    UIManager:show(TextViewer:new{
-        title  = "Relationship Map — " .. self:getBookTitle(),
-        text   = map_text,
-        width  = math.floor(Screen:getWidth() * 0.9),
-        height = math.floor(Screen:getHeight() * 0.85),
-    })
+    UIBrowser.onViewRelationshipMap(self)
 end
 
 function KoCharacters:onViewUsage()
-    local json        = require("dkjson")
-    local DataStorage = require("datastorage")
-    local path        = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
-
-    local stats = {}
-    local f = io.open(path, "r")
-    if f then
-        stats = json.decode(f:read("*all")) or {}
-        f:close()
-    end
-
-    local dates = {}
-    for date in pairs(stats) do table.insert(dates, date) end
-    table.sort(dates, function(a, b) return a > b end)
-
-    if #dates == 0 then
-        self:showMsg("No API usage recorded yet.", 3)
-        return
-    end
-
-    local lines = { "Date            Calls  Prompt     Output     Images" }
-    table.insert(lines, string.rep("-", 52))
-    local tot_calls, tot_prompt, tot_output, tot_images = 0, 0, 0, 0
-    for _, date in ipairs(dates) do
-        local d = stats[date]
-        local c = d.calls         or 0
-        local p = d.prompt_tokens or 0
-        local o = d.output_tokens or 0
-        local i = d.images        or 0
-        tot_calls  = tot_calls  + c
-        tot_prompt = tot_prompt + p
-        tot_output = tot_output + o
-        tot_images = tot_images + i
-        table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", date, c, p, o, i))
-    end
-    table.insert(lines, string.rep("-", 52))
-    table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", "TOTAL", tot_calls, tot_prompt, tot_output, tot_images))
-
-    UIManager:show(TextViewer:new{
-        title  = "API Usage (Gemini + Imagen)",
-        text   = table.concat(lines, "\n"),
-        width  = math.floor(Screen:getWidth() * 0.9),
-        height = math.floor(Screen:getHeight() * 0.85),
-    })
+    UISettings.onViewUsage(self)
 end
 
 -- Derive a stable book ID purely from the file path — no document API calls
@@ -616,21 +499,6 @@ end
 
 function KoCharacters:onMergeDetection()
     UIBrowser.onMergeDetection(self)
-end
-
-function KoCharacters:onClearDatabase()
-    local book_id = self:getBookID()
-    if not book_id then return end
-    UIManager:show(ConfirmBox:new{
-        text        = "Delete all saved characters for this book?",
-        ok_text     = "Delete",
-        ok_callback = function()
-            self.db:clear(book_id)
-            self.db:clearScannedPages(book_id)
-            self.db:clearPendingCleanup(book_id)
-            self:showMsg("Character database cleared.", 3)
-        end,
-    })
 end
 
 -- settings methods moved to ui_settings.lua

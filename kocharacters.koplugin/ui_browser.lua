@@ -1259,4 +1259,91 @@ function UIBrowser.onWordCharacterLookup(plugin, word)
     UIBrowser.showCharacterBrowser(plugin, book_id, "default", word)
 end
 
+-- ---------------------------------------------------------------------------
+-- Relationship map
+-- ---------------------------------------------------------------------------
+
+function UIBrowser.onViewRelationshipMap(plugin)
+    local api_key = plugin:getApiKey()
+    if api_key == "" then
+        plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local book_id = plugin:getBookID()
+    if not book_id then
+        plugin:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+
+    local characters = plugin.db:load(book_id)
+    if #characters < 2 then
+        plugin:showMsg("Need at least 2 saved characters to build a relationship map.")
+        return
+    end
+
+    local working_msg = InfoMessage:new{ text = "Building relationship map..." }
+    UIManager:show(working_msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local map_text, err, usage
+    local ok, call_err = pcall(function()
+        map_text, err, usage = client:buildRelationshipMap(characters, plugin:getRelationshipMapPrompt())
+    end)
+
+    UIManager:close(working_msg)
+    if ok and not err then plugin:recordUsage(usage) end
+
+    if not ok then
+        plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+        return
+    end
+    if err then
+        plugin:showMsg("Gemini error:\n" .. tostring(err), 8)
+        return
+    end
+
+    UIManager:show(TextViewer:new{
+        title  = "Relationship Map — " .. plugin:getBookTitle(),
+        text   = map_text,
+        width  = math.floor(Screen:getWidth() * 0.9),
+        height = math.floor(Screen:getHeight() * 0.85),
+    })
+end
+
+-- ---------------------------------------------------------------------------
+-- Activity log viewer
+-- ---------------------------------------------------------------------------
+
+function UIBrowser.onViewActivityLog(plugin)
+    local book_id = plugin:getBookID()
+    if not book_id then
+        plugin:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+    local DataStorage = require("datastorage")
+    local log_path = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/activity.log"
+    local f = io.open(log_path, "r")
+    if not f then
+        plugin:showMsg("No activity logged yet for this book.", 3)
+        return
+    end
+    local lines = {}
+    for line in f:lines() do table.insert(lines, line) end
+    f:close()
+    if #lines == 0 then
+        plugin:showMsg("Activity log is empty.", 3)
+        return
+    end
+    local reversed = {}
+    for i = #lines, 1, -1 do table.insert(reversed, lines[i]) end
+    UIManager:show(TextViewer:new{
+        title  = "Activity Log — " .. plugin:getBookTitle(),
+        text   = table.concat(reversed, "\n"),
+        width  = math.floor(Screen:getWidth() * 0.9),
+        height = math.floor(Screen:getHeight() * 0.85),
+    })
+end
+
 return UIBrowser

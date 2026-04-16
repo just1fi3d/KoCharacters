@@ -508,4 +508,56 @@ function UISettings.open(plugin)
     UIManager:show(settings_menu)
 end
 
+-- ---------------------------------------------------------------------------
+-- API usage viewer
+-- ---------------------------------------------------------------------------
+
+function UISettings.onViewUsage(plugin)
+    local json        = require("dkjson")
+    local DataStorage = require("datastorage")
+    local path        = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
+
+    local stats = {}
+    local f = io.open(path, "r")
+    if f then
+        stats = json.decode(f:read("*all")) or {}
+        f:close()
+    end
+
+    local dates = {}
+    for date in pairs(stats) do table.insert(dates, date) end
+    table.sort(dates, function(a, b) return a > b end)
+
+    if #dates == 0 then
+        plugin:showMsg("No API usage recorded yet.", 3)
+        return
+    end
+
+    local lines = { "Date            Calls  Prompt     Output     Images" }
+    table.insert(lines, string.rep("-", 52))
+    local tot_calls, tot_prompt, tot_output, tot_images = 0, 0, 0, 0
+    for _, date in ipairs(dates) do
+        local d = stats[date]
+        local c = d.calls         or 0
+        local p = d.prompt_tokens or 0
+        local o = d.output_tokens or 0
+        local i = d.images        or 0
+        tot_calls  = tot_calls  + c
+        tot_prompt = tot_prompt + p
+        tot_output = tot_output + o
+        tot_images = tot_images + i
+        table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", date, c, p, o, i))
+    end
+    table.insert(lines, string.rep("-", 52))
+    table.insert(lines, string.format("%-16s %-6d %-10d %-10d %d", "TOTAL", tot_calls, tot_prompt, tot_output, tot_images))
+
+    local TextViewer = require("ui/widget/textviewer")
+    UIManager:show(TextViewer:new{
+        title  = "API Usage (Gemini + Imagen)",
+        text   = table.concat(lines, "\n"),
+        width  = math.floor(Screen:getWidth() * 0.9),
+        height = math.floor(Screen:getHeight() * 0.85),
+    })
+end
+
 return UISettings
