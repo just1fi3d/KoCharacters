@@ -513,6 +513,7 @@ function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, 
         local Size                   = require("ui/size")
         local Blitbuffer             = require("ffi/blitbuffer")
         local Geom                   = require("ui/geometry")
+        local LineWidget             = require("ui/widget/linewidget")
 
         if ok_s and ok_f and ok_c and ok_v and ok_b then
             local DataStorage   = require("datastorage")
@@ -591,6 +592,10 @@ function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, 
                 VerticalGroup:new{
                     align = "left",
                     html_widget,
+                    LineWidget:new{
+                        dimen      = Geom:new{ w = inner_w, h = Size.line.thick },
+                        background = Blitbuffer.COLOR_DARK_GRAY,
+                    },
                     btable,
                 },
             }
@@ -684,6 +689,10 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
         end)
     end
 
+    -- Forward-declare browser_menu here so ALL callbacks (search, sort, characters)
+    -- capture the same upvalue slot; it is assigned at the bottom of this function.
+    local browser_menu
+
     -- Control items (search + sort) pinned at the top
     local items = {}
     local sort_labels = { default = "Added order", name = "Name A→Z", role = "Role" }
@@ -705,6 +714,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                         text     = "Clear",
                         callback = function()
                             UIManager:close(dialog)
+                            UIManager:close(browser_menu)
                             UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, "")
                         end,
                     },
@@ -718,6 +728,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                         callback         = function()
                             local q2 = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
                             UIManager:close(dialog)
+                            UIManager:close(browser_menu)
                             UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, q2)
                         end,
                     },
@@ -731,13 +742,11 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
     table.insert(items, {
         text     = "[ Sort: " .. (sort_labels[sort_mode] or sort_mode) .. " — tap to change ]",
         callback = function()
+            UIManager:close(browser_menu)
             UIBrowser.showCharacterBrowser(plugin, book_id, sort_cycle[sort_mode] or "default", query)
         end,
     })
 
-    -- Forward-declare browser_menu and refresh_browser BEFORE the loop so the
-    -- callbacks inside the loop capture them as upvalues (not nil globals).
-    local browser_menu
     local function refresh_browser()
         UIManager:close(browser_menu)
         UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
