@@ -117,15 +117,17 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
         if c.name then
             local idx = name_to_idx[c.name:lower()]
             if idx then
-                local id         = existing[idx].id           -- preserve stable ID
-                local notes      = existing[idx].user_notes   -- never overwrite user notes
-                local first_seen = existing[idx].first_seen_page  -- set once, never updated
+                local id          = existing[idx].id                     -- preserve stable ID
+                local notes       = existing[idx].user_notes             -- never overwrite user notes
+                local first_seen  = existing[idx].first_seen_page        -- set once, never updated
+                local first_quote = existing[idx].first_appearance_quote -- set once, never updated
                 local prev_moments = existing[idx].defining_moments or {}
                 existing[idx] = c
                 existing[idx].id = id or generateId()
-                if notes      and notes ~= "" then existing[idx].user_notes      = notes      end
-                if first_seen                 then existing[idx].first_seen_page  = first_seen end
-                if page_num                   then existing[idx].source_page      = page_num   end
+                if notes       and notes ~= ""       then existing[idx].user_notes          = notes       end
+                if first_seen                        then existing[idx].first_seen_page      = first_seen  end
+                if first_quote and first_quote ~= "" then existing[idx].first_appearance_quote = first_quote end
+                if page_num                          then existing[idx].source_page          = page_num    end
                 existing[idx].defining_moments = unionArrays(prev_moments, existing[idx].defining_moments)
                 changed = true
             else
