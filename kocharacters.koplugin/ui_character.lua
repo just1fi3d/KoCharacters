@@ -1,9 +1,8 @@
--- ui_browser.lua
+-- ui_character.lua
 -- KoCharacters: character browser, viewer, editor, conflict resolution, cleanup, merge detection.
 
 local UIManager   = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
-local InputDialog = require("ui/widget/inputdialog")
 local TextViewer  = require("ui/widget/textviewer")
 local ConfirmBox  = require("ui/widget/confirmbox")
 local Menu        = require("ui/widget/menu")
@@ -11,21 +10,22 @@ local Screen      = require("device").screen
 local logger      = require("logger")
 local _           = require("gettext")
 
-local GeminiClient = require("gemini_client")
-local CharUtils    = require("char_utils")
-local EpubReader   = require("epub_reader")
-local Portrait     = require("portrait")
+local GeminiClient     = require("gemini_client")
+local UtilsCharacter   = require("utils_character")
+local UIShared         = require("ui_shared")
+local EpubReader       = require("epub_reader")
+local Portrait         = require("portrait")
 
-local UIBrowser = {}
+local UICharacter = {}
 
 -- ---------------------------------------------------------------------------
 -- Duplicate detection helpers (also called from extraction.lua via DI)
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.checkAndWarnDuplicates(plugin, book_id, on_continue)
+function UICharacter.checkAndWarnDuplicates(plugin, book_id, on_continue)
     local characters = plugin.db:load(book_id)
     if #characters < 2 then on_continue(); return end
-    local dup_pairs = CharUtils.findDuplicatePairs(characters)
+    local dup_pairs = UtilsCharacter.findDuplicatePairs(characters)
     if #dup_pairs == 0 then on_continue(); return end
 
     local function processPairs(remaining)
@@ -73,10 +73,10 @@ function UIBrowser.checkAndWarnDuplicates(plugin, book_id, on_continue)
     processPairs(dup_pairs)
 end
 
-function UIBrowser.handleIncomingConflicts(plugin, book_id, new_chars, on_done, page_num, skip_cleanup)
-    new_chars = CharUtils.deduplicateIncoming(new_chars)
+function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done, page_num, skip_cleanup)
+    new_chars = UtilsCharacter.deduplicateIncoming(new_chars)
     local existing  = plugin.db:load(book_id)
-    local conflicts = CharUtils.findIncomingConflicts(existing, new_chars)
+    local conflicts = UtilsCharacter.findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
 
     -- Auto-accept mode: enrich all conflicts silently, show a toast summary
@@ -239,7 +239,7 @@ end
 -- Edit character
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onEditCharacter(plugin, book_id, char, refresh_browser_fn, show_viewer_fn)
+function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, show_viewer_fn)
     local lookup_name = char.name
 
     local function save()
@@ -261,28 +261,7 @@ function UIBrowser.onEditCharacter(plugin, book_id, char, refresh_browser_fn, sh
             showEditMenu()
         end
 
-        local function editTextField(label, current, multiline, on_save)
-            local dialog
-            dialog = InputDialog:new{
-                title         = "Edit " .. label,
-                input         = current or "",
-                input_type    = multiline and "text" or "string",
-                allow_newline = multiline,
-                buttons       = {{
-                    { text = "Cancel", callback = function() UIManager:close(dialog) end },
-                    {
-                        text             = "Save",
-                        is_enter_default = not multiline,
-                        callback         = function()
-                            UIManager:close(dialog)
-                            on_save(dialog:getInputText() or "")
-                        end,
-                    },
-                }},
-            }
-            UIManager:show(dialog)
-            dialog:onShowKeyboard()
-        end
+        local editTextField = UIShared.editTextField
 
         local items = {
             {
@@ -415,7 +394,7 @@ end
 -- Character viewer
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
+function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
     local name = char.name or "Unknown"
 
     local function make_buttons(close_fn)
@@ -464,21 +443,21 @@ function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, 
         end
         return {
             {
-                { text = "Re-analyze", callback = function() close_fn(); UIBrowser.onReanalyzeCharacter(plugin, book_id, char) end },
-                { text = "Clean up",   callback = function() close_fn(); UIBrowser.onCleanCharacter(plugin, book_id, char.name) end },
+                { text = "Re-analyze", callback = function() close_fn(); UICharacter.onReanalyzeCharacter(plugin, book_id, char) end },
+                { text = "Clean up",   callback = function() close_fn(); UICharacter.onCleanCharacter(plugin, book_id, char.name) end },
                 { text = "Edit",       callback = function()
                     close_fn()
                     local function show_viewer_fn()
-                        UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
+                        UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
                     end
-                    UIBrowser.onEditCharacter(plugin, book_id, char, refresh_browser_fn, show_viewer_fn)
+                    UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, show_viewer_fn)
                 end },
             },
             {
                 { text = "Gen. portrait", callback = function()
                     close_fn()
                     Portrait.onGenerate(plugin, book_id, char)
-                    UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
+                    UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
                 end },
                 { text = "Merge into...", callback = do_merge },
                 { text = "Delete",        callback = do_delete },
@@ -491,7 +470,7 @@ function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, 
         local viewer
         viewer = TextViewer:new{
             title  = char.name or "Character",
-            text   = CharUtils.formatText(char),
+            text   = UtilsCharacter.formatText(char),
             width  = math.floor(Screen:getWidth() * 0.9),
             height = math.floor(Screen:getHeight() * 0.85),
             buttons_table = make_buttons(function()
@@ -503,117 +482,62 @@ function UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, 
         return
     end
 
-    -- HTML viewer using ScrollHtmlWidget
+    -- HTML viewer using ScrollHtmlWidget (via UIShared)
     do
-        local ok_s, ScrollHtmlWidget = pcall(require, "ui/widget/scrollhtmlwidget")
-        local ok_f, FrameContainer   = pcall(require, "ui/widget/container/framecontainer")
-        local ok_c, CenterContainer  = pcall(require, "ui/widget/container/centercontainer")
-        local ok_v, VerticalGroup    = pcall(require, "ui/widget/verticalgroup")
-        local ok_b, ButtonTable      = pcall(require, "ui/widget/buttontable")
-        local Size                   = require("ui/size")
-        local Blitbuffer             = require("ffi/blitbuffer")
-        local Geom                   = require("ui/geometry")
-        local LineWidget             = require("ui/widget/linewidget")
+        local DataStorage   = require("datastorage")
+        local portraits_dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
 
-        if ok_s and ok_f and ok_c and ok_v and ok_b then
-            local DataStorage   = require("datastorage")
-            local portraits_dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/portraits"
+        local portrait_filename = nil
+        local portrait_path = Portrait.path(book_id, char)
+        local pf = io.open(portrait_path, "rb")
+        if pf then pf:close(); portrait_filename = portrait_path:match("([^/]+)$") end
 
-            local portrait_filename = nil
-            local portrait_path = Portrait.path(book_id, char)
-            local pf = io.open(portrait_path, "rb")
-            if pf then pf:close(); portrait_filename = portrait_path:match("([^/]+)$") end
+        local inner_w = Screen:getWidth() - 8 - 4  -- screen - outer margin - 2*border
 
-            local w = Screen:getWidth()  - 8
-            local h = Screen:getHeight() - 8
-            local border   = 2
-            local inner_w  = w - 2*border
+        local html_css, html_body = UtilsCharacter.formatHTML(char, portrait_filename, inner_w)
 
-            local html_css, html_body = CharUtils.formatHTML(char, portrait_filename, inner_w)
-
-            local dialog_ref = {}
-            local function close_fn()
-                if dialog_ref[1] then UIManager:close(dialog_ref[1]) end
-                local Device = require("device")
-                UIManager:scheduleIn(0.1, function() Device.screen:refreshFull(0, 0, Device.screen:getWidth(), Device.screen:getHeight()) end)
-            end
-
-            local rows = make_buttons(close_fn)
-            table.insert(rows[#rows], { text = "Close", callback = function()
-                close_fn()
-                if refresh_browser_fn then refresh_browser_fn() end
-            end })
-
-            local btable   = ButtonTable:new{ width = inner_w, buttons = rows }
-            local btable_h = btable:getSize().h
-            local inner_h  = h - 2*border
-
-            local function charLinkCallback(link)
-                local link_url = type(link) == "table" and (link.uri or "") or tostring(link)
-                if link_url:sub(1, 5) ~= "char:" then return end
-                local link_name = (link_url:sub(6):match("^%s*(.-)%s*$") or ""):lower()
-                if link_name == "" then return end
-                local found
-                for _, c in ipairs(plugin.db:load(book_id)) do
-                    local cname = (c.name or ""):lower()
-                    if cname:find(link_name, 1, true) or link_name:find(cname, 1, true) then
+        local function charLinkCallback(link)
+            local link_url  = type(link) == "table" and (link.uri or "") or tostring(link)
+            if link_url:sub(1, 5) ~= "char:" then return end
+            local link_name = (link_url:sub(6):match("^%s*(.-)%s*$") or ""):lower()
+            if link_name == "" then return end
+            local found
+            for _, c in ipairs(plugin.db:load(book_id)) do
+                local cname = (c.name or ""):lower()
+                if cname:find(link_name, 1, true) or link_name:find(cname, 1, true) then
+                    found = c; break
+                end
+                for _, alias in ipairs(c.aliases or {}) do
+                    local al = alias:lower()
+                    if al:find(link_name, 1, true) or link_name:find(al, 1, true) then
                         found = c; break
                     end
-                    for _, alias in ipairs(c.aliases or {}) do
-                        local al = alias:lower()
-                        if al:find(link_name, 1, true) or link_name:find(al, 1, true) then
-                            found = c; break
-                        end
-                    end
-                    if found then break end
                 end
-                if found then
-                    close_fn()
-                    UIManager:scheduleIn(0.15, function()
-                        UIBrowser.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
-                    end)
-                end
+                if found then break end
             end
-
-            local html_widget = ScrollHtmlWidget:new{
-                html_body               = html_body,
-                css                     = html_css,
-                html_resource_directory = portraits_dir,
-                width                   = inner_w,
-                height                  = inner_h - btable_h,
-                html_link_tapped_callback = charLinkCallback,
-            }
-
-            local frame = FrameContainer:new{
-                radius     = Size.radius.window,
-                padding    = 0,
-                bordersize = border,
-                background = Blitbuffer.COLOR_WHITE,
-                VerticalGroup:new{
-                    align = "left",
-                    html_widget,
-                    LineWidget:new{
-                        dimen      = Geom:new{ w = inner_w, h = Size.line.thick },
-                        background = Blitbuffer.COLOR_DARK_GRAY,
-                    },
-                    btable,
-                },
-            }
-
-            local center = CenterContainer:new{
-                dimen = Geom:new{ w = Screen:getWidth(), h = Screen:getHeight() },
-                frame,
-            }
-
-            html_widget.dialog = center
-            dialog_ref[1]      = center
-            UIManager:show(center)
-            UIManager:scheduleIn(0.3, function()
-                local Device = require("device")
-                Device.screen:refreshFull(0, 0, Device.screen:getWidth(), Device.screen:getHeight())
-            end)
-            return
+            if found then
+                -- close_fn is captured inside UIShared; schedule navigation after close
+                UIManager:scheduleIn(0.15, function()
+                    UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
+                end)
+            end
         end
+
+        UIShared.showHtmlViewer{
+            inner_w       = inner_w,
+            html_body     = html_body,
+            html_css      = html_css,
+            resource_dir  = portraits_dir,
+            link_callback = charLinkCallback,
+            make_buttons  = function(close_fn)
+                local rows = make_buttons(close_fn)
+                table.insert(rows[#rows], { text = "Close", callback = function()
+                    close_fn()
+                    if refresh_browser_fn then refresh_browser_fn() end
+                end })
+                return rows
+            end,
+        }
     end
 end
 
@@ -621,7 +545,7 @@ end
 -- Character browser
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onViewCharacters(plugin)
+function UICharacter.onViewCharacters(plugin)
     local book_id = plugin:getBookID()
     if not book_id then
         plugin:showMsg("Cannot identify book — is a document open?")
@@ -631,10 +555,10 @@ function UIBrowser.onViewCharacters(plugin)
         plugin:showMsg("No characters saved yet for this book.\nUse 'Extract characters from this page' first.")
         return
     end
-    UIBrowser.showCharacterBrowser(plugin, book_id, "default", "")
+    UICharacter.showCharacterBrowser(plugin, book_id, "default", "")
 end
 
-function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
+function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
     local ok, Menu2 = pcall(require, "ui/widget/menu")
     if not ok or not Menu2 then return end
 
@@ -715,7 +639,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                         callback = function()
                             UIManager:close(dialog)
                             UIManager:close(browser_menu)
-                            UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, "")
+                            UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, "")
                         end,
                     },
                     {
@@ -729,7 +653,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                             local q2 = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
                             UIManager:close(dialog)
                             UIManager:close(browser_menu)
-                            UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, q2)
+                            UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, q2)
                         end,
                     },
                 }},
@@ -743,13 +667,13 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
         text     = "[ Sort: " .. (sort_labels[sort_mode] or sort_mode) .. " — tap to change ]",
         callback = function()
             UIManager:close(browser_menu)
-            UIBrowser.showCharacterBrowser(plugin, book_id, sort_cycle[sort_mode] or "default", query)
+            UICharacter.showCharacterBrowser(plugin, book_id, sort_cycle[sort_mode] or "default", query)
         end,
     })
 
     local function refresh_browser()
         UIManager:close(browser_menu)
-        UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
+        UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
     end
 
     -- Character items
@@ -776,7 +700,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                                     break
                                 end
                             end
-                            UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
+                            UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
                         end,
                     })
                 end,
@@ -789,7 +713,7 @@ function UIBrowser.showCharacterBrowser(plugin, book_id, sort_mode, query)
                     char.unlocked = true
                     plugin.db:updateCharacter(book_id, char.name, char)
                 end
-                UIBrowser.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser)
+                UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser)
             end,
         })
         end  -- else (not spoiler)
@@ -809,7 +733,7 @@ end
 -- Cleanup all characters
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onCleanupAllCharacters(plugin)
+function UICharacter.onCleanupAllCharacters(plugin)
     local book_id = plugin:getBookID()
     if not book_id then return end
     local characters = plugin.db:load(book_id)
@@ -902,7 +826,7 @@ function UIBrowser.onCleanupAllCharacters(plugin)
         plugin.db:clearPendingCleanup(book_id)
         plugin:appendActivityLog(book_id, "Cleanup all: " .. total .. " character(s) cleaned")
         if G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") then
-            UIBrowser.onMergeDetection(plugin)
+            UICharacter.onMergeDetection(plugin)
         else
             plugin:showMsg("Cleanup complete.", 4)
         end
@@ -946,7 +870,7 @@ end
 -- Merge detection (AI-powered duplicate detection)
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onMergeDetection(plugin)
+function UICharacter.onMergeDetection(plugin)
     local book_id = plugin:getBookID()
     if not book_id then return end
 
@@ -1071,7 +995,7 @@ end
 -- Re-analyze / clean individual characters
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onReanalyzeCharacter(plugin, book_id, char)
+function UICharacter.onReanalyzeCharacter(plugin, book_id, char)
     local api_key = plugin:getApiKey()
     if api_key == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
@@ -1117,7 +1041,7 @@ function UIBrowser.onReanalyzeCharacter(plugin, book_id, char)
     plugin:showMsg('"' .. char.name .. '" updated.', 3)
 end
 
-function UIBrowser.onReanalyzeCharacterPicker(plugin)
+function UICharacter.onReanalyzeCharacterPicker(plugin)
     local book_id = plugin:getBookID()
     if not book_id then
         plugin:showMsg("Cannot identify book — is a document open?")
@@ -1136,7 +1060,7 @@ function UIBrowser.onReanalyzeCharacterPicker(plugin)
         table.insert(items, {
             text     = (c.name or "Unknown") .. role,
             callback = function()
-                UIBrowser.onReanalyzeCharacter(plugin, book_id, char)
+                UICharacter.onReanalyzeCharacter(plugin, book_id, char)
             end,
         })
     end
@@ -1152,7 +1076,7 @@ function UIBrowser.onReanalyzeCharacterPicker(plugin)
     end
 end
 
-function UIBrowser.onCleanCharacter(plugin, book_id, char_name)
+function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     local api_key = plugin:getApiKey()
     if api_key == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
@@ -1199,7 +1123,7 @@ end
 -- Word-selection character lookup (called from highlight popup)
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onWordCharacterLookup(plugin, word)
+function UICharacter.onWordCharacterLookup(plugin, word)
     if not word or word == "" then
         plugin:showMsg("No word selected.")
         return
@@ -1252,18 +1176,18 @@ function UIBrowser.onWordCharacterLookup(plugin, word)
     end
 
     if #matches == 1 then
-        UIBrowser.showCharacterViewer(plugin, book_id, matches[1])
+        UICharacter.showCharacterViewer(plugin, book_id, matches[1])
         return
     end
 
-    UIBrowser.showCharacterBrowser(plugin, book_id, "default", word)
+    UICharacter.showCharacterBrowser(plugin, book_id, "default", word)
 end
 
 -- ---------------------------------------------------------------------------
 -- Relationship map
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onViewRelationshipMap(plugin)
+function UICharacter.onViewRelationshipMap(plugin)
     local api_key = plugin:getApiKey()
     if api_key == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
@@ -1316,7 +1240,7 @@ end
 -- Activity log viewer
 -- ---------------------------------------------------------------------------
 
-function UIBrowser.onViewActivityLog(plugin)
+function UICharacter.onViewActivityLog(plugin)
     local book_id = plugin:getBookID()
     if not book_id then
         plugin:showMsg("Cannot identify book — is a document open?")
@@ -1346,4 +1270,4 @@ function UIBrowser.onViewActivityLog(plugin)
     })
 end
 
-return UIBrowser
+return UICharacter

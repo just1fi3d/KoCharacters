@@ -11,11 +11,11 @@ local _               = require("gettext")
 
 local Dispatcher   = require("dispatcher")
 local GeminiClient = require("gemini_client")
-local CharacterDB  = require("character_db")
+local DBCharacter  = require("db_character")
 local Portrait     = require("portrait")
 local Export       = require("export")
 local UISettings   = require("ui_settings")
-local UIBrowser    = require("ui_browser")
+local UICharacter  = require("ui_character")
 local Extraction   = require("extraction")
 
 local function portraitSafeName(name)
@@ -77,7 +77,7 @@ function KoCharacters:onCharViewUsage()        self:onViewUsage() end
 function KoCharacters:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
 function KoCharacters:init()
-    self.db = CharacterDB
+    self.db = DBCharacter
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
@@ -92,10 +92,10 @@ function KoCharacters:init()
         show_msg     = function(t, d) self_ref:showMsg(t, d) end,
         append_log   = function(b, m) self_ref:appendActivityLog(b, m) end,
         on_conflicts = function(book_id, new_chars, on_done, page_num, skip_cleanup)
-            UIBrowser.handleIncomingConflicts(self_ref, book_id, new_chars, on_done, page_num, skip_cleanup)
+            UICharacter.handleIncomingConflicts(self_ref, book_id, new_chars, on_done, page_num, skip_cleanup)
         end,
         check_warn_duplicates = function(book_id, on_continue)
-            UIBrowser.checkAndWarnDuplicates(self_ref, book_id, on_continue)
+            UICharacter.checkAndWarnDuplicates(self_ref, book_id, on_continue)
         end,
     })
 
@@ -116,7 +116,7 @@ function KoCharacters:init()
                     -- again after the character viewer is closed.
                     pcall(function() highlight_instance:clear() end)
                     UIManager:scheduleIn(0.1, function()
-                        UIBrowser.onWordCharacterLookup(self_ref, word)
+                        UICharacter.onWordCharacterLookup(self_ref, word)
                     end)
                 end,
             }
@@ -327,10 +327,10 @@ function KoCharacters:appendActivityLog(book_id, message)
 end
 
 function KoCharacters:onViewActivityLog()
-    UIBrowser.onViewActivityLog(self)
+    UICharacter.onViewActivityLog(self)
 end
 
--- duplicate/conflict handling moved to ui_browser.lua
+-- duplicate/conflict handling moved to ui_character.lua
 
 -- Key for Gemini text calls (character extraction, cleanup, etc.)
 function KoCharacters:getApiKey()
@@ -409,7 +409,7 @@ function KoCharacters:recordUsage(usage)
 end
 
 function KoCharacters:onViewRelationshipMap()
-    UIBrowser.onViewRelationshipMap(self)
+    UICharacter.onViewRelationshipMap(self)
 end
 
 function KoCharacters:onViewUsage()
@@ -463,7 +463,7 @@ function KoCharacters:getBookTitle()
 end
 
 function KoCharacters:onEditCharacter(book_id, char, refresh_browser_fn, show_viewer_fn)
-    UIBrowser.onEditCharacter(self, book_id, char, refresh_browser_fn, show_viewer_fn)
+    UICharacter.onEditCharacter(self, book_id, char, refresh_browser_fn, show_viewer_fn)
 end
 
 -- ---------------------------------------------------------------------------
@@ -480,43 +480,43 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
 end
 
 function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refresh_browser_fn)
-    UIBrowser.showCharacterViewer(self, book_id, char, sort_mode, query, refresh_browser_fn)
+    UICharacter.showCharacterViewer(self, book_id, char, sort_mode, query, refresh_browser_fn)
 end
 
 function KoCharacters:onViewCharacters()
-    UIBrowser.onViewCharacters(self)
+    UICharacter.onViewCharacters(self)
 end
 
 function KoCharacters:showCharacterBrowser(book_id, sort_mode, query)
-    UIBrowser.showCharacterBrowser(self, book_id, sort_mode, query)
+    UICharacter.showCharacterBrowser(self, book_id, sort_mode, query)
 end
 
 -- portrait and export methods moved to portrait.lua and export.lua
 
 function KoCharacters:onCleanupAllCharacters()
-    UIBrowser.onCleanupAllCharacters(self)
+    UICharacter.onCleanupAllCharacters(self)
 end
 
 function KoCharacters:onMergeDetection()
-    UIBrowser.onMergeDetection(self)
+    UICharacter.onMergeDetection(self)
 end
 
 -- settings methods moved to ui_settings.lua
 
 function KoCharacters:onReanalyzeCharacter(book_id, char)
-    UIBrowser.onReanalyzeCharacter(self, book_id, char)
+    UICharacter.onReanalyzeCharacter(self, book_id, char)
 end
 
 function KoCharacters:onReanalyzeCharacterPicker()
-    UIBrowser.onReanalyzeCharacterPicker(self)
+    UICharacter.onReanalyzeCharacterPicker(self)
 end
 
 function KoCharacters:onCleanCharacter(book_id, char_name)
-    UIBrowser.onCleanCharacter(self, book_id, char_name)
+    UICharacter.onCleanCharacter(self, book_id, char_name)
 end
 
 function KoCharacters:onWordCharacterLookup(word)
-    UIBrowser.onWordCharacterLookup(self, word)
+    UICharacter.onWordCharacterLookup(self, word)
 end
 
 return KoCharacters

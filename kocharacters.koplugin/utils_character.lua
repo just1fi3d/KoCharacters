@@ -1,14 +1,14 @@
--- char_utils.lua
+-- utils_character.lua
 -- Pure utility functions for character data: duplicate detection and display formatting.
 -- No I/O, no UI, no shared state. Safe to require from any module.
 
-local CharUtils = {}
+local UtilsCharacter = {}
 
 -- ---------------------------------------------------------------------------
 -- Duplicate detection
 -- ---------------------------------------------------------------------------
 
-function CharUtils.levenshtein(a, b)
+function UtilsCharacter.levenshtein(a, b)
     a, b = a:lower(), b:lower()
     local la, lb = #a, #b
     if la == 0 then return lb end
@@ -29,10 +29,10 @@ end
 -- Returns true when two already-lowercased names are similar enough to be duplicates.
 -- Both names must be at least 4 characters; exact matches are not considered similar
 -- (they are intentional updates, not conflicts).
-function CharUtils.namesAreSimilar(a_low, b_low)
+function UtilsCharacter.namesAreSimilar(a_low, b_low)
     if #a_low < 4 or #b_low < 4 then return false end
     if a_low == b_low then return false end
-    local dist      = CharUtils.levenshtein(a_low, b_low)
+    local dist      = UtilsCharacter.levenshtein(a_low, b_low)
     local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
     local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
     return dist <= threshold or substring ~= nil
@@ -40,13 +40,13 @@ end
 
 -- Compare incoming (new) characters against an existing list; return conflict pairs.
 -- Exact name matches are intentional updates handled by merge() — skip them here.
-function CharUtils.findIncomingConflicts(existing, incoming)
+function UtilsCharacter.findIncomingConflicts(existing, incoming)
     local conflicts = {}
     for _, new_c in ipairs(incoming) do
         local new_low = (new_c.name or ""):lower()
         for _, ex_c in ipairs(existing) do
             local ex_low = (ex_c.name or ""):lower()
-            if CharUtils.namesAreSimilar(new_low, ex_low) then
+            if UtilsCharacter.namesAreSimilar(new_low, ex_low) then
                 table.insert(conflicts, { new_char = new_c, existing_char = ex_c })
                 break
             end
@@ -57,7 +57,7 @@ end
 
 -- Collapse near-duplicate names within a single incoming batch before DB insertion.
 -- Merges the second into the first (fills in missing fields), returns deduped list.
-function CharUtils.deduplicateIncoming(chars)
+function UtilsCharacter.deduplicateIncoming(chars)
     if #chars < 2 then return chars end
     local removed = {}
     for i = 1, #chars do
@@ -68,7 +68,7 @@ function CharUtils.deduplicateIncoming(chars)
                 if not removed[j] then
                     local b     = chars[j]
                     local b_low = (b.name or ""):lower()
-                    if CharUtils.namesAreSimilar(a_low, b_low) then
+                    if UtilsCharacter.namesAreSimilar(a_low, b_low) then
                         if (a.role == nil or a.role == "") and b.role and b.role ~= "" then
                             a.role = b.role
                         end
@@ -95,13 +95,13 @@ end
 
 -- Check within an existing DB list for near-duplicate pairs.
 -- Used by checkAndWarnDuplicates before manual extraction actions.
-function CharUtils.findDuplicatePairs(characters)
+function UtilsCharacter.findDuplicatePairs(characters)
     local pairs_found = {}
     for i = 1, #characters do
         for j = i + 1, #characters do
             local a_low = (characters[i].name or ""):lower()
             local b_low = (characters[j].name or ""):lower()
-            if CharUtils.namesAreSimilar(a_low, b_low) then
+            if UtilsCharacter.namesAreSimilar(a_low, b_low) then
                 table.insert(pairs_found, { characters[i].name or "", characters[j].name or "" })
             end
         end
@@ -114,7 +114,7 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Returns a plain-text multi-line string for TextViewer display.
-function CharUtils.formatText(c)
+function UtilsCharacter.formatText(c)
     local lines = {}
 
     table.insert(lines, "NAME")
@@ -204,7 +204,7 @@ end
 -- Returns (css_string, html_body_string) for ScrollHtmlWidget display.
 -- portrait_path — absolute path to portrait image, or nil
 -- container_w   — widget container width in pixels
-function CharUtils.formatHTML(char, portrait_path, container_w)
+function UtilsCharacter.formatHTML(char, portrait_path, container_w)
     local function esc(s)
         s = tostring(s or "")
         s = s:gsub("&",  "&amp;")
@@ -333,4 +333,4 @@ function CharUtils.formatHTML(char, portrait_path, container_w)
     return css, table.concat(p)
 end
 
-return CharUtils
+return UtilsCharacter

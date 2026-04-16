@@ -1,4 +1,4 @@
--- character_db.lua
+-- db_character.lua
 -- Manages per-book character storage using JSON files in the history directory
 
 local json        = require("dkjson")

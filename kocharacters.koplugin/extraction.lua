@@ -11,14 +11,14 @@ local logger      = require("logger")
 local _           = require("gettext")
 
 local GeminiClient = require("gemini_client")
-local CharUtils    = require("char_utils")
+local UtilsCharacter = require("utils_character")
 local EpubReader   = require("epub_reader")
 
 local Extraction = {}
 Extraction.__index = Extraction
 
 -- deps:
---   db            (value)    — CharacterDB instance
+--   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
 --   get_api_key   (function) — returns current Gemini API key string
 --   get_prompt    (function) — returns current extraction prompt string
@@ -26,7 +26,7 @@ Extraction.__index = Extraction
 --   record_usage  (function) — records API usage stats
 --   show_msg      (function) — shows an InfoMessage toast
 --   append_log    (function) — appends a line to the book's activity log
---   on_conflicts  (function) — handleIncomingConflicts callback (ui_browser, injected to break circular dep)
+--   on_conflicts  (function) — handleIncomingConflicts callback (ui_character, injected to break circular dep)
 --   check_warn_duplicates (function) — checkAndWarnDuplicates callback (same reason)
 function Extraction.new(deps)
     local self = setmetatable({}, Extraction)
@@ -640,7 +640,7 @@ function Extraction:onScanPendingPages(book_id)
             table.insert(scanned_ok, page_num)
         elseif characters and #characters > 0 then
             local ex_chars = self_ref.db:load(book_id)
-            local ic = CharUtils.findIncomingConflicts(ex_chars, characters)
+            local ic = UtilsCharacter.findIncomingConflicts(ex_chars, characters)
             local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
@@ -760,7 +760,7 @@ function Extraction:onExtractCurrentPage()
             self_ref:_checkAndPromptPendingPages(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
-                table.insert(parts, CharUtils.formatText(c))
+                table.insert(parts, UtilsCharacter.formatText(c))
                 table.insert(parts, "")
             end
             UIManager:show(TextViewer:new{
@@ -1065,7 +1065,7 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
             logger.warn("KoCharacters: batch " .. batch_num .. " api: " .. tostring(err))
         elseif characters and #characters > 0 then
             local ex_chars     = self_ref.db:load(book_id)
-            local ic           = CharUtils.findIncomingConflicts(ex_chars, characters)
+            local ic           = UtilsCharacter.findIncomingConflicts(ex_chars, characters)
             local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
