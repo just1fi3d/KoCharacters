@@ -15,104 +15,11 @@ local _               = require("gettext")
 local Dispatcher   = require("dispatcher")
 local GeminiClient = require("gemini_client")
 local CharacterDB  = require("character_db")
+local EpubReader   = require("epub_reader")
+local CharUtils    = require("char_utils")
 
 local function portraitSafeName(name)
     return (name:gsub("[^%w%-]", "_"):lower())
-end
-
--- ---------------------------------------------------------------------------
--- Duplicate detection helpers
--- ---------------------------------------------------------------------------
-local function levenshtein(a, b)
-    a, b = a:lower(), b:lower()
-    local la, lb = #a, #b
-    if la == 0 then return lb end
-    if lb == 0 then return la end
-    local prev = {}
-    for j = 0, lb do prev[j] = j end
-    for i = 1, la do
-        local curr = { [0] = i }
-        for j = 1, lb do
-            local cost = (a:sub(i, i) == b:sub(j, j)) and 0 or 1
-            curr[j] = math.min(curr[j-1] + 1, prev[j] + 1, prev[j-1] + cost)
-        end
-        prev = curr
-    end
-    return prev[lb]
-end
-
--- Returns true when two already-lowercased names are similar enough to be duplicates.
--- Both names must be at least 4 characters; exact matches are not considered similar
--- (they are intentional updates, not conflicts).
-local function namesAreSimilar(a_low, b_low)
-    if #a_low < 4 or #b_low < 4 then return false end
-    if a_low == b_low then return false end
-    local dist      = levenshtein(a_low, b_low)
-    local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
-    local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
-    return dist <= threshold or substring ~= nil
-end
-
--- Compare incoming (new) characters against an existing list; return conflict pairs.
--- Exact name matches are intentional updates handled by merge() — skip them here.
-local function findIncomingConflicts(existing, incoming)
-    local conflicts = {}
-    for _, new_c in ipairs(incoming) do
-        local new_low = (new_c.name or ""):lower()
-        for _, ex_c in ipairs(existing) do
-            local ex_low = (ex_c.name or ""):lower()
-            if namesAreSimilar(new_low, ex_low) then
-                table.insert(conflicts, { new_char = new_c, existing_char = ex_c })
-                break
-            end
-        end
-    end
-    return conflicts
-end
-
--- Collapse near-duplicate names within a single incoming batch before DB insertion.
--- Merges the second into the first (fills in missing fields), returns deduped list.
-local function deduplicateIncoming(chars)
-    if #chars < 2 then return chars end
-    local removed = {}
-    for i = 1, #chars do
-        if not removed[i] then
-            local a = chars[i]
-            local a_low = (a.name or ""):lower()
-            for j = i + 1, #chars do
-                if not removed[j] then
-                    local b = chars[j]
-                    local b_low = (b.name or ""):lower()
-                    if namesAreSimilar(a_low, b_low) then
-                        -- Merge b's non-empty fields into a
-                        if (a.role == nil or a.role == "") and b.role and b.role ~= "" then a.role = b.role end
-                        if (a.physical_description == nil or a.physical_description == "") and b.physical_description and b.physical_description ~= "" then a.physical_description = b.physical_description end
-                        if (a.personality == nil or a.personality == "") and b.personality and b.personality ~= "" then a.personality = b.personality end
-                        removed[j] = true
-                    end
-                end
-            end
-        end
-    end
-    local result = {}
-    for i, c in ipairs(chars) do
-        if not removed[i] then table.insert(result, c) end
-    end
-    return result
-end
-
-local function findDuplicatePairs(characters)
-    local pairs_found = {}
-    for i = 1, #characters do
-        for j = i + 1, #characters do
-            local a_low = (characters[i].name or ""):lower()
-            local b_low = (characters[j].name or ""):lower()
-            if namesAreSimilar(a_low, b_low) then
-                table.insert(pairs_found, { characters[i].name or "", characters[j].name or "" })
-            end
-        end
-    end
-    return pairs_found
 end
 
 -- ---------------------------------------------------------------------------
@@ -277,19 +184,6 @@ function KoCharacters:_runOnTimeMigrations()
     ))
 end
 
-function KoCharacters:_getChapterStartForPage(pageno)
-    local doc = self.ui and self.ui.document
-    if not doc then return pageno end
-    local ok, toc = pcall(function() return doc:getToc() end)
-    if not ok or type(toc) ~= "table" or #toc == 0 then return 1 end
-    local chapter_start = 1
-    for _, entry in ipairs(toc) do
-        local ep = tonumber(entry.page) or 0
-        if ep <= pageno and ep > chapter_start then chapter_start = ep end
-    end
-    return chapter_start
-end
-
 function KoCharacters:_onPageChanged(pageno)
     if not G_reader_settings:readSetting("kocharacters_auto_extract") then return end
 
@@ -375,7 +269,7 @@ function KoCharacters:autoExtract(page_num)
     local book_id = self:getBookID()
     if not book_id then return end
 
-    local page_text, err = self:getCurrentPageText(page_num)
+    local page_text, err = EpubReader.getPageText(self.ui.document, page_num)
     if not page_text then
         logger.warn("KoCharacters: autoExtract getText failed: " .. tostring(err))
         -- Mark as scanned anyway so we don't retry a page that can't be read
@@ -487,7 +381,7 @@ function KoCharacters:_processNextInQueue()
         return
     end
 
-    local page_text, err = self:getCurrentPageText(pageno)
+    local page_text, err = EpubReader.getPageText(self.ui.document, pageno)
     if not page_text or #page_text < 20 then
         self.db:markPageScanned(book_id, pageno)
         self:_processNextInQueue()
@@ -700,7 +594,7 @@ function KoCharacters:onScanPendingPages(book_id)
         UIManager:show(progress_msg)
         UIManager:forceRePaint()
 
-        local page_text = self_ref:getCurrentPageText(page_num)
+        local page_text = EpubReader.getPageText(self_ref.ui.document, page_num)
         if not page_text or #page_text < 20 then
             table.insert(scanned_ok, page_num)
             UIManager:scheduleIn(0.1, function() processPage(idx + 1) end)
@@ -743,7 +637,7 @@ function KoCharacters:onScanPendingPages(book_id)
             table.insert(scanned_ok, page_num)
         elseif characters and #characters > 0 then
             local ex_chars = self_ref.db:load(book_id)
-            local ic = findIncomingConflicts(ex_chars, characters)
+            local ic = CharUtils.findIncomingConflicts(ex_chars, characters)
             local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
@@ -1027,7 +921,7 @@ end
 function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
     local characters = self.db:load(book_id)
     if #characters < 2 then on_continue(); return end
-    local dup_pairs = findDuplicatePairs(characters)
+    local dup_pairs = CharUtils.findDuplicatePairs(characters)
     if #dup_pairs == 0 then on_continue(); return end
 
     local self_ref = self
@@ -1078,9 +972,9 @@ function KoCharacters:checkAndWarnDuplicates(book_id, on_continue)
 end
 
 function KoCharacters:handleIncomingConflicts(book_id, new_chars, on_done, page_num, skip_cleanup)
-    new_chars = deduplicateIncoming(new_chars)
+    new_chars = CharUtils.deduplicateIncoming(new_chars)
     local existing  = self.db:load(book_id)
-    local conflicts = findIncomingConflicts(existing, new_chars)
+    local conflicts = CharUtils.findIncomingConflicts(existing, new_chars)
     if #conflicts == 0 then on_done(new_chars); return end
 
     -- Auto-accept mode: enrich all conflicts silently, show a toast summary
@@ -1463,448 +1357,6 @@ function KoCharacters:getBookTitle()
     return "Unknown Book"
 end
 
-function KoCharacters:getCurrentPageText(override_page)
-    if not self.ui or not self.ui.document then
-        return nil, "No document open"
-    end
-
-    local doc = self.ui.document
-    local page
-    if override_page then
-        page = override_page
-    else
-        pcall(function() page = self.ui.view.state.page end)
-    end
-    if not page then return nil, "Could not get page number" end
-
-    -- CreDocument (EPUB): getPageXPointer works, getPosFromXPointer works
-    -- Use these to get integer position range, then getTextBoxesFromPositions
-    if type(doc.getPageXPointer) == "function" then
-        logger.info("KoCharacters: using getPageXPointer+getPosFromXPointer strategy")
-
-        local ok1, xp_cur  = pcall(function() return doc:getPageXPointer(page) end)
-        local ok2, xp_next = pcall(function() return doc:getPageXPointer(page + 1) end)
-
-        if not ok1 or not xp_cur then
-            return nil, "getPageXPointer failed: " .. tostring(xp_cur)
-        end
-
-        local ok3, pos_start = pcall(function() return doc:getPosFromXPointer(xp_cur) end)
-        if not ok3 then return nil, "getPosFromXPointer failed: " .. tostring(pos_start) end
-
-        local pos_end
-        if ok2 and xp_next then
-            local ok4, p = pcall(function() return doc:getPosFromXPointer(xp_next) end)
-            if ok4 then pos_end = p end
-        end
-        if not pos_end then pos_end = pos_start + 5000 end
-
-        logger.info("KoCharacters: pos=" .. tostring(pos_start) .. "-" .. tostring(pos_end))
-
-        -- Try getTextBoxesFromPositions (some builds have this)
-        local ok5, boxes = pcall(function()
-            return doc:getTextBoxesFromPositions(pos_start, pos_end)
-        end)
-        if ok5 and boxes and type(boxes) == "table" and #boxes > 0 then
-            local words = {}
-            for _, line in ipairs(boxes) do
-                if type(line) == "table" then
-                    for _, word in ipairs(line) do
-                        if type(word) == "table" and word.word and word.word ~= "" then
-                            table.insert(words, word.word)
-                        end
-                    end
-                end
-            end
-            if #words > 0 then return table.concat(words, " ") end
-        end
-
-        -- Use getDocumentFileContent — confirmed working
-        local frag_idx = tostring(xp_cur):match("DocFragment%[(%d+)%]")
-        logger.info("KoCharacters: frag_idx=" .. tostring(frag_idx))
-        -- Get fragment start AND end position from TOC for accurate slicing
-        local frag_start_pos = 0
-        local frag_end_pos = 0
-        local ok_toc, toc = pcall(function() return doc:getToc() end)
-        if ok_toc and type(toc) == "table" then
-            local best_page = 0
-            local best_idx = 0
-            for i, entry in ipairs(toc) do
-                local ep = tonumber(entry.page) or 0
-                if ep <= page and ep > best_page then
-                    best_page = ep
-                    best_idx = i
-                    if entry.xpointer then
-                        local ok_xp, p = pcall(function()
-                            return doc:getPosFromXPointer(entry.xpointer)
-                        end)
-                        if ok_xp and p then frag_start_pos = p end
-                    end
-                end
-            end
-            -- Get next TOC entry position as fragment end
-            local next_entry = toc[best_idx + 1]
-            if next_entry and next_entry.xpointer then
-                local ok_xp, p = pcall(function()
-                    return doc:getPosFromXPointer(next_entry.xpointer)
-                end)
-                if ok_xp and p then frag_end_pos = p end
-            end
-        end
-        logger.info("KoCharacters: frag_start=" .. frag_start_pos .. " frag_end=" .. frag_end_pos)
-
-        -- Read epub as zip directly — most reliable approach
-        local function stripAndSlice(raw)
-            local text = raw
-            text = text:gsub("<[^>]+>", " ")
-            text = text:gsub("&nbsp;",  " ")
-            text = text:gsub("&amp;",   "&")
-            text = text:gsub("&lt;",    "<")
-            text = text:gsub("&gt;",    ">")
-            text = text:gsub("&quot;",  '"')
-            text = text:gsub("&#%d+;",  " ")
-            text = text:gsub("%s+",     " ")
-            text = text:gsub("^%s+",    "")
-            text = text:gsub("%s+$",    "")
-            if #text < 50 then text = raw:sub(1, 4000) end
-            local MAX = 2500
-            if #text <= MAX then return text end
-            -- Use fragment-relative position for accurate slicing
-            local frag_span = math.max(
-                (frag_end_pos > 0 and frag_end_pos or pos_start + 50000) - frag_start_pos, 1)
-            local page_offset = math.max(pos_start - frag_start_pos, 0)
-            local ratio = math.min(page_offset / frag_span, 1.0)
-            local centre = math.floor(ratio * #text)
-            local s = math.max(1, centre - 500)
-            local e = math.min(#text, s + MAX)
-            logger.info("KoCharacters: ratio=" .. string.format("%.2f", ratio) .. " slice=" .. s .. "-" .. e .. "/" .. #text)
-            local slice = text:sub(s, e)
-            if #slice < 200 then return text:sub(1, math.min(#text, MAX)) end
-            return slice
-        end
-
-        local epub_path = doc.file
-        logger.info("KoCharacters: epub_path=" .. tostring(epub_path))
-        if epub_path then
-            logger.info("KoCharacters: starting popen unzip")
-            local ok_p, result = pcall(function()
-                local h = io.popen("unzip -l '" .. epub_path .. "' 2>/dev/null", "r")
-                if not h then return nil, "popen failed" end
-                local listing = h:read("*a")
-                h:close()
-                return listing
-            end)
-            logger.info("KoCharacters: popen ok=" .. tostring(ok_p) .. " type=" .. type(result) .. " len=" .. (type(result)=="string" and #result or 0))
-
-            if ok_p and type(result) == "string" and #result > 10 then
-                local n = tonumber(frag_idx) or 1
-                -- Find OPF path in listing
-                local opf_path = result:match("([^%s]+%.opf)")
-                logger.info("KoCharacters: opf_path=" .. tostring(opf_path))
-
-                if opf_path then
-                    local ok2, opf = pcall(function()
-                        local h = io.popen("unzip -p '" .. epub_path .. "' '" .. opf_path .. "' 2>/dev/null", "r")
-                        if not h then return nil end
-                        local s = h:read("*a"); h:close(); return s
-                    end)
-                    logger.info("KoCharacters: opf ok=" .. tostring(ok2) .. " len=" .. (type(opf)=="string" and #opf or 0))
-
-                    if ok2 and type(opf) == "string" and #opf > 50 then
-                        -- Find nth spine itemref
-                        local count, item_id = 0, nil
-                        for idref in opf:gmatch([[itemref[^>]+idref="([^"]+)"]]) do
-                            count = count + 1
-                            if count == n then item_id = idref; break end
-                        end
-                        logger.info("KoCharacters: spine#" .. n .. " id=" .. tostring(item_id))
-
-                        if item_id then
-                            -- Build manifest id->href table to avoid itemref/item pattern collision
-                            local manifest = {}
-                            for tag in opf:gmatch("<item%s[^>]+/>") do
-                                local id   = tag:match([[id="([^"]+)"]])
-                                local href = tag:match([[href="([^"]+)"]])
-                                if id and href then manifest[id] = href end
-                            end
-                            local href = manifest[item_id]
-                            logger.info("KoCharacters: chapter href=" .. tostring(href))
-
-                            if href then
-                                local base = opf_path:match("^(.*/)") or ""
-                                local full = base .. href
-                                local ok3, chapter = pcall(function()
-                                    local h = io.popen("unzip -p '" .. epub_path .. "' '" .. full .. "' 2>/dev/null", "r")
-                                    if not h then return nil end
-                                    local s = h:read("*a"); h:close(); return s
-                                end)
-                                logger.info("KoCharacters: chapter ok=" .. tostring(ok3) .. " len=" .. (type(chapter)=="string" and #chapter or 0))
-
-                                if ok3 and type(chapter) == "string" and #chapter > 100 then
-                                    return stripAndSlice(chapter)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        return nil, "All extraction methods failed for page " .. tostring(page)
-    end
-
-    -- Fallback: getTextBoxes
-    local boxes
-    local ok, err = pcall(function() boxes = doc:getTextBoxes(page) end)
-    if not ok then return nil, "getTextBoxes error: " .. tostring(err) end
-    if not boxes or #boxes == 0 then return nil, "No text found on this page" end
-    local words = {}
-    for _, line in ipairs(boxes) do
-        if type(line) == "table" then
-            for _, word in ipairs(line) do
-                if type(word) == "table" and word.word and word.word ~= "" then
-                    table.insert(words, word.word)
-                end
-            end
-        end
-    end
-    if #words == 0 then return nil, "Text boxes empty" end
-    return table.concat(words, " ")
-end
-
-function KoCharacters:getCurrentChapterPageRange()
-    if not self.ui or not self.ui.document then
-        return nil, nil, "No document open"
-    end
-
-    local doc = self.ui.document
-    local current_page
-    pcall(function() current_page = self.ui.view.state.page end)
-    if not current_page then return nil, nil, "Could not get page number" end
-
-    local total_pages
-    pcall(function() total_pages = doc:getPageCount() end)
-    total_pages = total_pages or current_page
-
-    local ok_toc, toc = pcall(function() return doc:getToc() end)
-    if not ok_toc or type(toc) ~= "table" or #toc == 0 then
-        return 1, total_pages, nil
-    end
-
-    local chapter_start = 1
-    local chapter_idx   = 0
-    for i, entry in ipairs(toc) do
-        local ep = tonumber(entry.page) or 0
-        if ep <= current_page and ep >= chapter_start then
-            chapter_start = ep
-            chapter_idx   = i
-        end
-    end
-
-    local chapter_end = total_pages
-    local next_entry  = toc[chapter_idx + 1]
-    if next_entry then
-        local np = tonumber(next_entry.page) or 0
-        if np > chapter_start then
-            chapter_end = np - 1
-        end
-    end
-
-    return chapter_start, chapter_end, nil
-end
-
-function KoCharacters:formatCharacter(c)
-    local lines = {}
-
-    table.insert(lines, "NAME")
-    table.insert(lines, c.name or "Unknown")
-
-    if c.aliases and #c.aliases > 0 then
-        table.insert(lines, "")
-        table.insert(lines, "ALIASES")
-        table.insert(lines, table.concat(c.aliases, ", "))
-    end
-
-    if c.role and c.role ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "ROLE")
-        table.insert(lines, c.role)
-    end
-
-    if c.occupation and c.occupation ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "OCCUPATION")
-        table.insert(lines, c.occupation)
-    end
-
-    if c.identity_tags and #c.identity_tags > 0 then
-        table.insert(lines, "")
-        table.insert(lines, "IDENTITY")
-        table.insert(lines, table.concat(c.identity_tags, ", "))
-    end
-
-    if c.motivation and c.motivation ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "MOTIVATION")
-        table.insert(lines, c.motivation)
-    end
-
-    if c.defining_moments and #c.defining_moments > 0 then
-        table.insert(lines, "")
-        table.insert(lines, "DEFINING MOMENTS")
-        for _, m in ipairs(c.defining_moments) do
-            table.insert(lines, "• " .. m)
-        end
-    end
-
-    if c.physical_description and c.physical_description ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "APPEARANCE")
-        table.insert(lines, c.physical_description)
-    end
-
-    if c.personality and c.personality ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "PERSONALITY")
-        table.insert(lines, c.personality)
-    end
-
-    if c.relationships and #c.relationships > 0 then
-        table.insert(lines, "")
-        table.insert(lines, "RELATIONSHIPS")
-        table.insert(lines, table.concat(c.relationships, "\n"))
-    end
-
-    if c.first_appearance_quote and c.first_appearance_quote ~= "" then
-        table.insert(lines, "")
-        local seen_label = "FIRST SEEN"
-        if c.first_seen_page then seen_label = seen_label .. " (page " .. c.first_seen_page .. ")" end
-        table.insert(lines, seen_label)
-        table.insert(lines, '"' .. c.first_appearance_quote .. '"')
-    end
-
-    if c.user_notes and c.user_notes ~= "" then
-        table.insert(lines, "")
-        table.insert(lines, "NOTES")
-        table.insert(lines, c.user_notes)
-    end
-
-    if c.source_page then
-        table.insert(lines, "")
-        table.insert(lines, "LAST UPDATED")
-        table.insert(lines, "Page " .. c.source_page)
-    end
-
-    return table.concat(lines, "\n")
-end
-
--- Returns CSS string and body HTML string separately, so the caller can
--- pass css via ScrollHtmlWidget's css= parameter (MuPDF requires this).
-function KoCharacters:formatCharacterHTML(char, portrait_path, container_w)
-    local function esc(s)
-        s = tostring(s or "")
-        s = s:gsub("&",  "&amp;")
-        s = s:gsub("<",  "&lt;")
-        s = s:gsub(">",  "&gt;")
-        s = s:gsub('"',  "&quot;")
-        return s
-    end
-    local css = table.concat({
-        "@page{margin:0;}",
-        "html,body{margin:0;padding:0;}",
-        "body{font-family:Georgia,serif;padding:12px 14px;background:#fff;color:#111;line-height:1.3;}",
-        "table{border-collapse:collapse;border-spacing:0;width:100%;}",
-        "td{padding:0;vertical-align:top;}",
-        "img.portrait{display:block;width:100%;height:auto;border-radius:3px;}",
-        "h1{font-size:1.45em;color:#000;margin:0 0 3px;font-weight:bold;}",
-        ".role{color:#444;font-style:italic;margin:0;font-size:0.87em;}",
-        ".section{margin-top:16px;padding-top:12px;border-top:1px solid #ccc;}",
-        ".label{font-size:0.76em;text-transform:uppercase;letter-spacing:.09em;color:#333;font-weight:bold;margin:0 0 5px;}",
-        "p{margin:0;font-size:0.87em;text-align:justify;}",
-        "ul{margin:4px 0 0 0;padding-left:36px;font-size:0.87em;}",
-        "ul li{margin-bottom:3px;}",
-        ".quote{border-left:2px solid #888;padding-left:10px;color:#444;font-style:italic;}",
-        ".foot{font-size:.72em;color:#aaa;margin-top:16px;}",
-        "a{color:#333;text-decoration:underline;}",
-    })
-    local p = {}
-
-    local name_html = '<h1>' .. esc(char.name or "Unknown") .. '</h1>'
-    local role_html = ""
-    if char.role and char.role ~= "" and char.role ~= "unknown" then
-        role_html = '<p class="role">' .. esc(char.role) .. '</p>'
-    end
-    local aliases_html = ""
-    if char.aliases and #char.aliases > 0 then
-        local items = {}
-        for _, a in ipairs(char.aliases) do items[#items+1] = '<li>' .. esc(a) .. '</li>' end
-        local styled_items = {}
-        for _, a in ipairs(char.aliases) do
-            styled_items[#styled_items+1] = '<li style="font-family:Georgia,serif;">' .. esc(a) .. '</li>'
-        end
-        aliases_html = '<div style="margin-top:8px;font-family:Georgia,serif;"><div class="label">Also known as</div><ul>' .. table.concat(styled_items) .. '</ul></div>'
-    end
-    p[#p+1] = name_html
-    p[#p+1] = role_html
-    if portrait_path then
-        local body_w   = (container_w or 300) - 28  -- subtract body padding (14px each side)
-        local img_w    = math.floor(body_w * 0.4)
-        local text_w   = body_w - img_w - 12
-        p[#p+1] = '<div style="display:table;width:' .. body_w .. 'px;">'
-        p[#p+1] = '<div style="display:table-row;">'
-        p[#p+1] = '<div style="display:table-cell;width:' .. img_w .. 'px;vertical-align:top;padding-right:8px;"><img width="' .. (img_w-8) .. '" src="' .. portrait_path .. '"></div>'
-        p[#p+1] = '<div style="display:table-cell;width:' .. text_w .. 'px;vertical-align:top;font-family:Georgia,serif;">' .. aliases_html .. '</div>'
-        p[#p+1] = '</div></div>'
-    else
-        p[#p+1] = aliases_html
-    end
-
-    -- Body sections
-    if char.identity_tags and #char.identity_tags > 0 then
-        local items = {}
-        for _, t in ipairs(char.identity_tags) do items[#items+1] = '<li>' .. esc(t) .. '</li>' end
-        p[#p+1] = '<div class="section"><div class="label">Identity</div><ul>' .. table.concat(items) .. '</ul></div>'
-    end
-    if char.motivation and char.motivation ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">Motivation</div><p>' .. esc(char.motivation) .. '</p></div>'
-    end
-    if char.defining_moments and #char.defining_moments > 0 then
-        local items = {}
-        for _, m in ipairs(char.defining_moments) do items[#items+1] = '<li>' .. esc(m) .. '</li>' end
-        p[#p+1] = '<div class="section"><div class="label">Defining Moments</div><ul>' .. table.concat(items) .. '</ul></div>'
-    end
-    if char.physical_description and char.physical_description ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">Appearance</div><p>' .. esc(char.physical_description) .. '</p></div>'
-    end
-    if char.personality and char.personality ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">Personality</div><p>' .. esc(char.personality) .. '</p></div>'
-    end
-    if char.relationships and #char.relationships > 0 then
-        local items = {}
-        for _, r in ipairs(char.relationships) do
-            local rel_name, rel_type = r:match("^(.-)%s*%((.-)%)%s*$")
-            if rel_name and rel_name ~= "" then
-                items[#items+1] = '<li><a href="char:' .. esc(rel_name) .. '">' .. esc(rel_name) .. '</a> (' .. esc(rel_type) .. ')</li>'
-            else
-                items[#items+1] = '<li>' .. esc(r) .. '</li>'
-            end
-        end
-        p[#p+1] = '<div class="section"><div class="label">Relationships</div><ul>' .. table.concat(items) .. '</ul></div>'
-    end
-    if char.first_appearance_quote and char.first_appearance_quote ~= "" then
-        local seen_label = "First seen"
-        if char.first_seen_page then seen_label = seen_label .. " (page " .. tostring(char.first_seen_page) .. ")" end
-        p[#p+1] = '<div class="section"><div class="label">' .. seen_label .. '</div><p class="quote">&ldquo;' .. esc(char.first_appearance_quote) .. '&rdquo;</p></div>'
-    end
-    if char.user_notes and char.user_notes ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">My notes</div><p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p></div>'
-    end
-    if char.source_page then
-        p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(char.source_page) .. '</p>'
-    end
-    return css, table.concat(p)
-end
-
 -- ---------------------------------------------------------------------------
 -- Edit character
 -- ---------------------------------------------------------------------------
@@ -2103,7 +1555,7 @@ function KoCharacters:onExtractCurrentPage()
     end
 
     self:checkAndWarnDuplicates(book_id, function()
-        local page_text, text_err = self:getCurrentPageText()
+        local page_text, text_err = EpubReader.getPageText(self.ui.document, self:getCurrentPage())
         if not page_text then
             self:showMsg("Could not read page text:\n" .. tostring(text_err))
             return
@@ -2180,7 +1632,7 @@ function KoCharacters:onExtractCurrentPage()
             self:_checkAndPromptPendingPages(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
-                table.insert(parts, self:formatCharacter(c))
+                table.insert(parts, CharUtils.formatText(c))
                 table.insert(parts, "")
             end
             UIManager:show(TextViewer:new{
@@ -2208,7 +1660,7 @@ function KoCharacters:onScanChapter()
         return
     end
 
-    local start_page, end_page, range_err = self:getCurrentChapterPageRange()
+    local start_page, end_page, range_err = EpubReader.getChapterRange(self.ui.document, self:getCurrentPage())
     if range_err then
         self:showMsg("Could not determine chapter range:\n" .. tostring(range_err))
         return
@@ -2430,7 +1882,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
         local texts = {}
         for p = batch_start, batch_end do
             if not scanned[p] then
-                local page_text = self_ref:getCurrentPageText(p)
+                local page_text = EpubReader.getPageText(self_ref.ui.document, p)
                 if page_text and #page_text >= 20 then
                     table.insert(texts, page_text)
                 end
@@ -2484,7 +1936,7 @@ function KoCharacters:doChapterScan(book_id, start_page, end_page)
             logger.warn("KoCharacters: batch " .. batch_num .. " api: " .. tostring(err))
         elseif characters and #characters > 0 then
             local ex_chars     = self_ref.db:load(book_id)
-            local ic           = findIncomingConflicts(ex_chars, characters)
+            local ic           = CharUtils.findIncomingConflicts(ex_chars, characters)
             local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true
@@ -2585,7 +2037,7 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
         local viewer
         viewer = TextViewer:new{
             title  = char.name or "Character",
-            text   = self:formatCharacter(char),
+            text   = CharUtils.formatText(char),
             width  = math.floor(Screen:getWidth() * 0.9),
             height = math.floor(Screen:getHeight() * 0.85),
             buttons_table = make_buttons(function()
@@ -2622,7 +2074,7 @@ function KoCharacters:showCharacterViewer(book_id, char, sort_mode, query, refre
             local border   = 2
             local inner_w  = w - 2*border
 
-            local html_css, html_body = self:formatCharacterHTML(char, portrait_filename, inner_w)
+            local html_css, html_body = CharUtils.formatHTML(char, portrait_filename, inner_w)
 
             local dialog_ref = {}
             local function close_fn()
@@ -4282,34 +3734,6 @@ function KoCharacters:onSetApiKey()
     dialog:onShowKeyboard()
 end
 
-function KoCharacters:onSetHFToken()
-    local current = G_reader_settings:readSetting("kocharacters_hf_token") or ""
-    local dialog
-    dialog = InputDialog:new{
-        title       = "HuggingFace Token",
-        input       = current,
-        input_hint  = "hf_...",
-        description = "Enter your HuggingFace access token.\nFree at huggingface.co — used for portrait generation.",
-        buttons = {
-            {
-                { text = "Cancel", callback = function() UIManager:close(dialog) end },
-                {
-                    text             = "Save",
-                    is_enter_default = true,
-                    callback         = function()
-                        local token = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
-                        G_reader_settings:saveSetting("kocharacters_hf_token", token)
-                        UIManager:close(dialog)
-                        self:showMsg("HuggingFace token saved.", 2)
-                    end,
-                },
-            },
-        },
-    }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
-end
-
 function KoCharacters:onEditPrompt(title, setting_key, default_prompt)
     local current = G_reader_settings:readSetting(setting_key) or default_prompt
     local is_custom = G_reader_settings:readSetting(setting_key) ~= nil
@@ -4351,182 +3775,6 @@ function KoCharacters:onEditPrompt(title, setting_key, default_prompt)
     dialog:onShowKeyboard()
 end
 
-function KoCharacters:onDebugPageText()
-    if not self.ui or not self.ui.document then
-        self:showMsg("No document open.")
-        return
-    end
-
-    local lines = {}
-
-    -- Document type
-    table.insert(lines, "Doc file: " .. tostring(self.ui.document.file))
-    table.insert(lines, "Doc type: " .. tostring(self.ui.document.dc_language or self.ui.document.ext or "?"))
-
-    -- Page number
-    local page
-    pcall(function() page = self.ui.view.state.page end)
-    table.insert(lines, "Page: " .. tostring(page))
-
-    -- Try getPageText
-    local ok1, result1 = pcall(function()
-        return self.ui.document:getPageText(page)
-    end)
-    table.insert(lines, "getPageText ok=" .. tostring(ok1))
-    if ok1 then
-        table.insert(lines, "getPageText type=" .. type(result1))
-        if type(result1) == "string" then
-            table.insert(lines, "getPageText len=" .. #result1)
-            table.insert(lines, "preview: " .. result1:sub(1, 80))
-        elseif type(result1) == "table" then
-            table.insert(lines, "getPageText #=" .. #result1)
-            -- Show first entry structure
-            local first = result1[1]
-            if first then
-                table.insert(lines, "first entry type=" .. type(first))
-                if type(first) == "table" then
-                    table.insert(lines, "first[1] type=" .. type(first[1]))
-                    if type(first[1]) == "table" then
-                        table.insert(lines, "first[1].word=" .. tostring(first[1].word))
-                        table.insert(lines, "first[1].text=" .. tostring(first[1].text))
-                    end
-                end
-            end
-        else
-            table.insert(lines, "value=" .. tostring(result1))
-        end
-    else
-        table.insert(lines, "error: " .. tostring(result1))
-    end
-
-    -- Try getTextBoxes on current page and neighbors
-    for _, p in ipairs({page, page-1, page+1}) do
-        local ok2, result2 = pcall(function()
-            return self.ui.document:getTextBoxes(p)
-        end)
-        local tag = "getTextBoxes[p=" .. tostring(p) .. "] ok=" .. tostring(ok2)
-        if ok2 and type(result2) == "table" then
-            tag = tag .. " #lines=" .. #result2
-            -- Count words and show sample
-            local word_count = 0
-            local sample = {}
-            for _, line in ipairs(result2) do
-                if type(line) == "table" then
-                    for _, w in ipairs(line) do
-                        if type(w) == "table" and w.word then
-                            word_count = word_count + 1
-                            if #sample < 5 then table.insert(sample, w.word) end
-                        end
-                    end
-                end
-            end
-            tag = tag .. " #words=" .. word_count
-            if #sample > 0 then
-                tag = tag .. "\nsample: " .. table.concat(sample, " ")
-            end
-        elseif not ok2 then
-            tag = tag .. " err=" .. tostring(result2):sub(1,60)
-        end
-        table.insert(lines, tag)
-    end
-
-    -- EPUB uses CreDocument engine - probe its specific methods
-    local cre_methods = {
-        "getTextFromPositions",
-        "getPageLinks",
-        "drawCurrentViewByPage",
-        "getVisiblePageCount",
-        "getPageFromXPointer",
-        "getCurrentPos",
-        "getXPointer",
-        "getPosFromXPointer",
-        "getDocumentFileContent",
-    }
-    for _, m in ipairs(cre_methods) do
-        local has = type(self.ui.document[m]) == "function"
-        if has then table.insert(lines, "has method: " .. m) end
-    end
-
-    -- Test full strategy: getPageXPointer -> getPosFromXPointer -> getTextBoxesFromPositions
-    local ok_xp1, xp_cur  = pcall(function() return self.ui.document:getPageXPointer(page or 114) end)
-    local ok_xp2, xp_next = pcall(function() return self.ui.document:getPageXPointer((page or 114) + 1) end)
-    table.insert(lines, "getPageXPointer(cur) ok=" .. tostring(ok_xp1) .. " val=" .. tostring(xp_cur):sub(1,35))
-    table.insert(lines, "getPageXPointer(next) ok=" .. tostring(ok_xp2) .. " val=" .. tostring(xp_next):sub(1,35))
-
-    local pos_s, pos_e
-    if ok_xp1 then
-        local ok3, p = pcall(function() return self.ui.document:getPosFromXPointer(xp_cur) end)
-        table.insert(lines, "getPosFromXPointer(cur) ok=" .. tostring(ok3) .. " val=" .. tostring(p))
-        if ok3 then pos_s = p end
-    end
-    if ok_xp2 then
-        local ok4, p = pcall(function() return self.ui.document:getPosFromXPointer(xp_next) end)
-        table.insert(lines, "getPosFromXPointer(next) ok=" .. tostring(ok4) .. " val=" .. tostring(p))
-        if ok4 then pos_e = p end
-    end
-
-    if pos_s then
-        local ok5, boxes = pcall(function()
-            return self.ui.document:getTextBoxesFromPositions(pos_s, pos_e or pos_s + 5000)
-        end)
-        table.insert(lines, "getTextBoxesFromPositions ok=" .. tostring(ok5))
-        if ok5 and type(boxes) == "table" then
-            table.insert(lines, "#boxes=" .. #boxes)
-        elseif not ok5 then
-            table.insert(lines, "err=" .. tostring(boxes):sub(1,60))
-        end
-    end
-
-    -- Probe getDocumentFileContent with various arg types
-    local frag_idx = tostring(xp_cur or ""):match("DocFragment%[(%d+)%]")
-    table.insert(lines, "frag_idx=" .. tostring(frag_idx))
-
-    -- Try with number
-    local ok_a, r_a = pcall(function() return self.ui.document:getDocumentFileContent(tonumber(frag_idx)) end)
-    table.insert(lines, "getDocFC(number) ok=" .. tostring(ok_a) .. " type=" .. type(r_a))
-
-    -- Try with string index
-    local ok_b, r_b = pcall(function() return self.ui.document:getDocumentFileContent(frag_idx) end)
-    table.insert(lines, "getDocFC(string) ok=" .. tostring(ok_b) .. " type=" .. type(r_b))
-
-    -- Try getDocumentFilePath or similar
-    for _, m in ipairs({"getDocumentFilePath","getFilePath","getImageContent","getToc","getMetadata"}) do
-        local has = type(self.ui.document[m]) == "function"
-        if has then table.insert(lines, "has: " .. m) end
-    end
-
-    -- Try getToc to see structure
-    local ok_t, toc = pcall(function() return self.ui.document:getToc() end)
-    table.insert(lines, "getToc ok=" .. tostring(ok_t))
-    if ok_t and type(toc) == "table" then
-        table.insert(lines, "toc #=" .. #toc)
-        if toc[1] then
-            local keys = {}
-            for k,v in pairs(toc[1]) do table.insert(keys, k.."="..tostring(v):sub(1,20)) end
-            table.insert(lines, "toc[1]: " .. table.concat(keys, " "))
-        end
-    end
-
-    -- Try getPageLinks which might reveal file paths
-    local ok_l, links = pcall(function() return self.ui.document:getPageLinks(page or 114) end)
-    table.insert(lines, "getPageLinks ok=" .. tostring(ok_l))
-    if ok_l and type(links) == "table" then
-        table.insert(lines, "links #=" .. #links)
-        if links[1] then
-            local keys = {}
-            for k,v in pairs(links[1]) do table.insert(keys, k.."="..tostring(v):sub(1,20)) end
-            table.insert(lines, "link[1]: " .. table.concat(keys, " "))
-        end
-    end
-
-    UIManager:show(TextViewer:new{
-        title  = "Debug Info",
-        text   = table.concat(lines, "\n"),
-        width  = math.floor(Screen:getWidth() * 0.9),
-        height = math.floor(Screen:getHeight() * 0.85),
-    })
-end
-
 function KoCharacters:onReanalyzeCharacter(book_id, char)
     local api_key = self:getApiKey()
     if api_key == "" then
@@ -4534,7 +3782,7 @@ function KoCharacters:onReanalyzeCharacter(book_id, char)
         return
     end
 
-    local page_text, perr = self:getCurrentPageText()
+    local page_text, perr = EpubReader.getPageText(self.ui.document, self:getCurrentPage())
     if not page_text then
         self:showMsg("Could not get page text:\n" .. tostring(perr))
         return
@@ -4651,59 +3899,6 @@ function KoCharacters:onCleanCharacter(book_id, char_name)
     self.db:updateCharacter(book_id, char_name, char)
     self:appendActivityLog(book_id, 'Cleaned up "' .. char_name .. '"')
     self:showMsg('"' .. char_name .. '" cleaned up.', 3)
-end
-
-function KoCharacters:onShowLimits()
-    local api_key = self:getApiKey()
-    if api_key == "" then
-        self:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
-        return
-    end
-
-    local working_msg = InfoMessage:new{ text = "Fetching model info from Gemini..." }
-    UIManager:show(working_msg)
-    UIManager:forceRePaint()
-
-    local client = GeminiClient:new(api_key)
-    local info, err
-    local ok, call_err = pcall(function()
-        info, err = client:fetchModelInfo()
-    end)
-
-    UIManager:close(working_msg)
-
-    if not ok then
-        self:showMsg("Error:\n" .. tostring(call_err), 6)
-        return
-    end
-    if err then
-        self:showMsg("API error:\n" .. tostring(err), 6)
-        return
-    end
-
-    local lines = {}
-    table.insert(lines, "Model")
-    table.insert(lines, "  Name:    " .. (info.displayName or info.name or "unknown"))
-    table.insert(lines, "  Version: " .. (info.name or ""):match("models/(.+)$") or "?")
-    table.insert(lines, "")
-    table.insert(lines, "Per-request token limits")
-    table.insert(lines, "  Input:   " .. tostring(info.inputTokenLimit  or "?"))
-    table.insert(lines, "  Output:  " .. tostring(info.outputTokenLimit or "?"))
-    table.insert(lines, "")
-    table.insert(lines, "Free tier rate limits")
-    table.insert(lines, "  15   requests / minute  (RPM)")
-    table.insert(lines, "  500  requests / day     (RPD)")
-    table.insert(lines, "  250,000  tokens / minute  (TPM)")
-    table.insert(lines, "")
-    table.insert(lines, "Note: live usage is not exposed by the API.")
-    table.insert(lines, "Check aistudio.google.com to monitor usage.")
-
-    UIManager:show(TextViewer:new{
-        title  = "Gemini API Limits",
-        text   = table.concat(lines, "\n"),
-        width  = math.floor(Screen:getWidth() * 0.9),
-        height = math.floor(Screen:getHeight() * 0.85),
-    })
 end
 
 -- ---------------------------------------------------------------------------
