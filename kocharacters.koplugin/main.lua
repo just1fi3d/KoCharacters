@@ -88,6 +88,7 @@ function KoCharacters:init()
     local self_ref = self
     self.extraction = Extraction.new({
         db          = self.db,
+        db_codex    = self.db_codex,
         ui          = self.ui,
         get_api_key = function() return self_ref:getApiKey() end,
         get_prompt  = function() return self_ref:getExtractionPrompt() end,
