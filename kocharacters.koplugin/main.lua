@@ -408,6 +408,11 @@ function KoCharacters:getMergeDetectionPrompt()
         or GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT
 end
 
+function KoCharacters:getUnnamedMatchPrompt()
+    return G_reader_settings:readSetting("kocharacters_unnamed_match_prompt")
+        or GeminiClient.DEFAULT_UNNAMED_MATCH_PROMPT
+end
+
 function KoCharacters:getReanalyzePrompt()
     return G_reader_settings:readSetting("kocharacters_reanalyze_prompt")
         or GeminiClient.DEFAULT_REANALYZE_PROMPT

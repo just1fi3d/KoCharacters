@@ -454,7 +454,6 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
         end
         return {
             {
-                { text = "Re-analyze", callback = function() close_fn(); UICharacter.onReanalyzeCharacter(plugin, book_id, char) end },
                 { text = "Clean up",   callback = function() close_fn(); UICharacter.onCleanCharacter(plugin, book_id, char.name) end },
                 { text = "Edit",       callback = function()
                     close_fn()
@@ -848,11 +847,16 @@ function UICharacter.onCleanupAllCharacters(plugin)
         if changed then plugin.db:save(book_id, all_chars) end
         plugin.db:clearPendingCleanup(book_id)
         plugin:appendActivityLog(book_id, "Cleanup all: " .. total .. " character(s) cleaned")
-        if G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") then
-            UICharacter.onMergeDetection(plugin)
-        else
-            plugin:showMsg("Cleanup complete.", 4)
+
+        local function afterUnnamedCheck()
+            if G_reader_settings:readSetting("kocharacters_detect_dupes_after_cleanup") then
+                UICharacter.onMergeDetection(plugin)
+            else
+                plugin:showMsg("Cleanup complete.", 4)
+            end
         end
+
+        UICharacter.onDetectUnnamedMatches(plugin, book_id, afterUnnamedCheck)
     end
 
     local dialog
@@ -1015,6 +1019,141 @@ function UICharacter.onMergeDetection(plugin)
 end
 
 -- ---------------------------------------------------------------------------
+-- Unnamed character matching (triggered after cleanup)
+-- ---------------------------------------------------------------------------
+
+function UICharacter.onDetectUnnamedMatches(plugin, book_id, on_done)
+    local api_key = plugin:getApiKey()
+    if api_key == "" then
+        if on_done then on_done() end
+        return
+    end
+
+    local all_chars = plugin.db:load(book_id)
+
+    local unnamed, named = {}, {}
+    for _, c in ipairs(all_chars) do
+        local slim = {
+            name                 = c.name,
+            aliases              = c.aliases,
+            physical_description = c.physical_description,
+            personality          = c.personality,
+            role                 = c.role,
+            occupation           = c.occupation,
+            relationships        = c.relationships,
+        }
+        if c.name:match("^Unnamed") then
+            table.insert(unnamed, slim)
+        else
+            table.insert(named, slim)
+        end
+    end
+
+    if #unnamed == 0 then
+        if on_done then on_done() end
+        return
+    end
+
+    local detect_msg = InfoMessage:new{ text = "Checking unnamed characters for matches..." }
+    UIManager:show(detect_msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local groups, derr, dusage
+    local dok, dcall_err = pcall(function()
+        groups, derr, dusage = client:detectUnnamedMatches(unnamed, named, plugin:getUnnamedMatchPrompt())
+    end)
+    UIManager:close(detect_msg)
+    if dok and not derr then plugin:recordUsage(dusage) end
+
+    if not dok then
+        plugin:showMsg("Plugin error:\n" .. tostring(dcall_err), 8)
+        if on_done then on_done() end
+        return
+    end
+    if derr then
+        plugin:showMsg("Gemini error:\n" .. tostring(derr), 8)
+        if on_done then on_done() end
+        return
+    end
+    if not groups or #groups == 0 then
+        if on_done then on_done() end
+        return
+    end
+
+    -- Validate: keep must be a named character, absorb must be an unnamed one
+    local name_set, unnamed_set = {}, {}
+    for _, c in ipairs(all_chars) do
+        if c.name:match("^Unnamed") then
+            unnamed_set[c.name] = true
+        else
+            name_set[c.name] = true
+        end
+    end
+
+    local valid_groups = {}
+    for _, g in ipairs(groups) do
+        if g.keep and name_set[g.keep] and type(g.absorb) == "table" and #g.absorb > 0 then
+            local valid = true
+            for _, a in ipairs(g.absorb) do
+                if not unnamed_set[a] then valid = false; break end
+            end
+            if valid then table.insert(valid_groups, g) end
+        end
+    end
+
+    if #valid_groups == 0 then
+        if on_done then on_done() end
+        return
+    end
+
+    local group_idx    = 1
+    local merged_count = 0
+
+    local function applyNext()
+        if group_idx > #valid_groups then
+            if merged_count > 0 then
+                plugin:appendActivityLog(book_id, "Resolved " .. merged_count .. " unnamed character(s)")
+                plugin:showMsg(merged_count .. " unnamed character(s) merged.", 4)
+            end
+            if on_done then on_done() end
+            return
+        end
+
+        local g = valid_groups[group_idx]
+        group_idx = group_idx + 1
+
+        local absorb_names = table.concat(g.absorb, ", ")
+        local reason = g.reason or "matching profiles"
+        local confirm_text = string.format(
+            'Unnamed match %d of %d\n\n"%s" appears to be "%s".\n\nReason: %s\n\nMerge "%s" into "%s"?',
+            group_idx - 1, #valid_groups,
+            absorb_names, g.keep,
+            reason,
+            absorb_names, g.keep
+        )
+
+        UIManager:show(ConfirmBox:new{
+            text        = confirm_text,
+            ok_text     = "Merge",
+            cancel_text = "Skip",
+            ok_callback = function()
+                for _, src in ipairs(g.absorb) do
+                    plugin.db:mergeCharacters(book_id, src, g.keep)
+                    merged_count = merged_count + 1
+                end
+                applyNext()
+            end,
+            cancel_callback = function()
+                applyNext()
+            end,
+        })
+    end
+
+    applyNext()
+end
+
+-- ---------------------------------------------------------------------------
 -- Re-analyze / clean individual characters
 -- ---------------------------------------------------------------------------
 
@@ -1129,17 +1268,48 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     if not ok then plugin:showMsg("Error:\n" .. tostring(call_err), 6); return end
     if err    then plugin:showMsg("Gemini error:\n" .. tostring(err), 6); return end
 
-    if result.physical_description then char.physical_description = result.physical_description end
-    if result.personality          then char.personality          = result.personality          end
+    local new_name = result.name
+    if new_name and new_name ~= "" and new_name ~= char.name then
+        -- Name promotion: remove new name from aliases, add old name to aliases
+        local old_name = char.name
+        local alias_set = {}
+        for _, a in ipairs(result.aliases or char.aliases or {}) do
+            if a ~= "" and a ~= new_name then alias_set[a] = true end
+        end
+        alias_set[old_name] = true
+        local new_aliases = {}
+        for a in pairs(alias_set) do table.insert(new_aliases, a) end
+        char.name    = new_name
+        char.aliases = new_aliases
+    elseif type(result.aliases) == "table" then
+        char.aliases = result.aliases
+    end
+    if result.physical_description and result.physical_description ~= "" then
+        char.physical_description = result.physical_description
+    end
+    if result.personality and result.personality ~= "" then
+        char.personality = result.personality
+    end
+    if result.motivation and result.motivation ~= "" then
+        char.motivation = result.motivation
+    end
     if result.role and result.role ~= "" then char.role = result.role end
-    if result.relationships and type(result.relationships) == "table" then
+    if type(result.relationships) == "table" then
         char.relationships = result.relationships
+    end
+    if type(result.identity_tags) == "table" then
+        char.identity_tags = result.identity_tags
+    end
+    if type(result.defining_moments) == "table" then
+        char.defining_moments = result.defining_moments
     end
     char.needs_cleanup = nil
 
+    -- updateCharacter matches by char_name (original), replaces with char (may have new name)
     plugin.db:updateCharacter(book_id, char_name, char)
-    plugin:appendActivityLog(book_id, 'Cleaned up "' .. char_name .. '"')
-    plugin:showMsg('"' .. char_name .. '" cleaned up.', 3)
+    local display_name = char.name
+    plugin:appendActivityLog(book_id, 'Cleaned up "' .. display_name .. '"')
+    plugin:showMsg('"' .. display_name .. '" cleaned up.', 3)
 end
 
 -- ---------------------------------------------------------------------------

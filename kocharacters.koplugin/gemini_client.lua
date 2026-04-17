@@ -163,9 +163,12 @@ Clean up each text field:
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
+- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
+  "name": "...",
+  "aliases": ["..."],
   "identity_tags": ["..."],
   "physical_description": "...",
   "personality": "...",
@@ -546,6 +549,7 @@ For each character, clean up the text fields:
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
+- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
 [{ "name": "...", "aliases": ["..."], "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
@@ -675,6 +679,81 @@ function GeminiClient:detectMergeGroups(characters, prompt_template)
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},
         generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url     = API_BASE .. "?key=" .. self.api_key,
+        method  = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then return nil, "Gemini returned no text" end
+    text = stripCodeFences(text)
+    local result, _, jerr = json.decode(text)
+    if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    return result, nil, extractUsage(parsed)
+end
+
+GeminiClient.DEFAULT_UNNAMED_MATCH_PROMPT = [[
+You are given two lists of character profiles from the same book.
+
+UNNAMED characters (names like "Unnamed Girl", "Unnamed Soldier") are characters whose names were not known when they were first encountered.
+NAMED characters are characters whose names are known.
+
+Your task: determine whether any unnamed character is almost certainly the same person as a named character, based on physical description, personality, relationships, or other profile details.
+
+Rules:
+- Only suggest a match when you are HIGHLY CONFIDENT. Physical description must be consistent — do not match on personality alone.
+- Never match two unnamed characters together.
+- A character can only appear in one match.
+- If no high-confidence matches exist, return an empty array.
+
+Return ONLY a valid JSON array (no markdown, no code fences). Each element must have exactly these keys:
+[{ "keep": "the named character's name", "absorb": ["the unnamed character's name"], "reason": "one-sentence explanation" }]
+
+Unnamed characters:
+{{unnamed}}
+
+Named characters:
+{{named}}
+]]
+
+-- Detect which unnamed characters match named characters by profile similarity
+-- Returns: array of {keep, absorb, reason} or nil, err, usage
+function GeminiClient:detectUnnamedMatches(unnamed_chars, named_chars, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not unnamed_chars or #unnamed_chars == 0 then return {}, nil end
+    if not named_chars   or #named_chars   == 0 then return {}, nil end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_UNNAMED_MATCH_PROMPT
+    local prompt = sub(tmpl, "{{unnamed}}", json.encode(unnamed_chars))
+    prompt       = sub(prompt, "{{named}}",   json.encode(named_chars))
+
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.1, maxOutputTokens = 4096 },
     })
 
     local response_body = {}

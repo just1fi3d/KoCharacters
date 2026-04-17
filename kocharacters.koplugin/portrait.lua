@@ -10,7 +10,7 @@ local logger      = require("logger")
 
 local Portrait = {}
 
-Portrait.DEFAULT_PORTRAIT_PROMPT = [[Oil painting portrait of a fictional {{role}} character. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Appearance: {{appearance}} Personality expressed through posture and expression: {{personality}} Occupation: {{occupation}} — the character's clothing, accessories, tools, and background environment must authentically reflect this occupation and social standing (e.g. a blacksmith wears a leather apron near a forge, a physician carries instruments in a study, a soldier wears armour or uniform). Book setting: {{book_context}} Use historically accurate clothing, hairstyle, and background consistent with the character's era, occupation, and the book setting. Paint in the style of a master portrait painter from that same era — matching the composition, lighting, brushwork, color palette, and aesthetic conventions of period-authentic portraiture (e.g. Renaissance, Baroque, Victorian, etc. as appropriate). Fine detail in fabric, face, and any occupation-relevant objects or surroundings.]]
+Portrait.DEFAULT_PORTRAIT_PROMPT = [[Oil painting portrait of a fictional {{role}} character. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Appearance: {{appearance}} Personality expressed through posture and expression: {{personality}} Occupation: {{occupation}} — the character's clothing, accessories, tools, and background environment must authentically reflect this occupation and social standing (e.g. a blacksmith wears a leather apron near a forge, a physician carries instruments in a study, a soldier wears armour or uniform). Book setting: {{book_context}} CRITICAL: Render the character's appearance EXACTLY as described — including scars, weathering, unconventional features, age, and any traits that deviate from conventional beauty. Do not idealize or beautify. A battle-worn character must look battle-worn; a severe character must look severe. Use historically accurate clothing, hairstyle, and background consistent with the character's era, occupation, and the book setting. Paint in the style of a master portrait painter from that same era — matching the composition, lighting, brushwork, color palette, and aesthetic conventions of period-authentic portraiture (e.g. Renaissance, Baroque, Victorian, etc. as appropriate). Fine detail in fabric, face, and any occupation-relevant objects or surroundings.]]
 
 local function portraitSafeName(name)
     return (name:gsub("[^%w%-]", "_"):lower())
@@ -238,6 +238,8 @@ end
 
 Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT = [[Visual depiction of a fictional {{type}} from a book. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Subject: {{name}}. Description: {{description}} Significance: {{significance}} Book setting: {{book_context}} Paint in a rich, detailed style consistent with the book's setting and era. The image should serve as an encyclopaedia illustration — evocative, accurate, and atmospheric.]]
 
+Portrait.DEFAULT_CODEX_CONCEPT_PORTRAIT_PROMPT = [[Abstract symbolic illustration of a fictional concept from a book. Square composition, 1024x1024. Absolutely no text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Concept: {{name}}. {{description}} Book setting: {{book_context}} Do not attempt a literal depiction. Instead create a purely visual, atmospheric image — use light, color, texture, and symbolic imagery to evoke the feeling and significance of this concept. Style: dark fantasy illustration, painterly, atmospheric, no typography of any kind.]]
+
 -- Returns the absolute path where a portrait for this codex entry should be stored.
 function Portrait.codexPath(book_id, entry)
     local DataStorage = require("datastorage")
@@ -276,8 +278,11 @@ function Portrait.generateCodex(plugin, book_id, entry)
     end
 
     local book_context = plugin.db:loadBookContext(book_id)
+    local default_tmpl = (etype == "concept")
+        and Portrait.DEFAULT_CODEX_CONCEPT_PORTRAIT_PROMPT
+        or  Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT
     local tmpl   = G_reader_settings:readSetting("kocharacters_codex_portrait_prompt")
-                   or Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT
+                   or default_tmpl
     local prompt = sub(sub(sub(sub(sub(tmpl,
         "name", name), "type", etype), "description", desc),
         "significance", sig), "book_context", book_context)
