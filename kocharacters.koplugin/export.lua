@@ -153,6 +153,82 @@ function Export.exportList(plugin)
         p('</div>')
     end
 
+    -- Codex section
+    local codex_entries = plugin.db_codex and plugin.db_codex:load(book_id) or {}
+    if #codex_entries > 0 then
+        table.sort(codex_entries, function(a, b)
+            local order = { place = 1, faction = 2, concept = 3, object = 4, species = 5, unknown = 6 }
+            local ta = order[a.type or "unknown"] or 6
+            local tb = order[b.type or "unknown"] or 6
+            if ta ~= tb then return ta < tb end
+            return (a.name or ""):lower() < (b.name or ""):lower()
+        end)
+
+        p('<h1 style="margin-top:48px;">Codex</h1>')
+        p('<p style="color:#888;font-size:.85em;">' .. #codex_entries .. ' entr' .. (#codex_entries == 1 and 'y' or 'ies') .. '</p>')
+        p('<nav style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:16px 20px;margin-bottom:24px;">')
+        p('<div style="font-weight:bold;font-size:.85em;text-transform:uppercase;letter-spacing:.05em;color:#999;margin-bottom:8px;">Entries</div>')
+        p('<ol style="margin:0;padding-left:20px;column-count:2;column-gap:2em;">')
+        for _, e in ipairs(codex_entries) do
+            local anchor  = "codex-" .. esc(e.name or "Unknown"):gsub("%s+", "-"):lower()
+            local badge   = (e.type and e.type ~= "" and e.type ~= "unknown") and (' <span style="color:#aaa;font-size:.85em;">— ' .. esc(e.type) .. '</span>') or ""
+            p('<li style="margin-bottom:4px;"><a href="#' .. anchor .. '" style="color:#5a3e1b;text-decoration:none;">' .. esc(e.name or "Unknown") .. '</a>' .. badge .. '</li>')
+        end
+        p('</ol></nav>')
+
+        local codex_portraits_abs = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/codex_portraits/"
+        for _, e in ipairs(codex_entries) do
+            local anchor = "codex-" .. esc(e.name or "Unknown"):gsub("%s+", "-"):lower()
+            p('<div class="character" id="' .. anchor .. '">')
+            local portrait_rel = nil
+            local safe_name = portraitSafeName(e.name or "Unknown")
+            local id_name   = (e.id and e.id ~= "") and e.id or nil
+            for _, candidate in ipairs({ id_name and (id_name .. ".png") or nil, safe_name .. ".png" }) do
+                if candidate then
+                    local pf = io.open(codex_portraits_abs .. candidate, "r")
+                    if pf then pf:close(); portrait_rel = "codex_portraits/" .. candidate; break end
+                end
+            end
+            if portrait_rel then
+                local alt = esc(e.name or "Unknown")
+                p('<div class="char-portrait">')
+                p('<a href="' .. portrait_rel .. '" onclick="event.preventDefault();document.getElementById(\'lb-img\').src=this.href;document.getElementById(\'lb\').classList.add(\'on\');">')
+                p('<img src="' .. portrait_rel .. '" alt="Image of ' .. alt .. '">')
+                p('</a>')
+                p('</div>')
+            end
+            p('<div class="char-info">')
+            p('<div class="char-name">' .. esc(e.name or "Unknown") .. '</div>')
+            if e.type and e.type ~= "" and e.type ~= "unknown" then
+                p('<div class="char-role">' .. esc(e.type:upper()) .. '</div>')
+            end
+            if e.description and e.description ~= "" then
+                p('<div class="field"><label>Description</label><p>' .. esc(e.description) .. '</p></div>')
+            end
+            if e.significance and e.significance ~= "" then
+                p('<div class="field"><label>Significance</label><p>' .. esc(e.significance) .. '</p></div>')
+            end
+            if e.known_connections and #e.known_connections > 0 then
+                local parts2 = {}
+                for _, c in ipairs(e.known_connections) do table.insert(parts2, esc(c)) end
+                p('<div class="field"><label>Known Connections</label><p>' .. table.concat(parts2, "<br>") .. '</p></div>')
+            end
+            if e.aliases and #e.aliases > 0 then
+                p('<div class="field"><label>Also Known As</label><p>' .. esc(table.concat(e.aliases, ", ")) .. '</p></div>')
+            end
+            if e.first_appearance_quote and e.first_appearance_quote ~= "" then
+                local seen_label = "First seen"
+                if e.first_seen_page then seen_label = seen_label .. " (page " .. esc(tostring(e.first_seen_page)) .. ")" end
+                p('<div class="field"><label>' .. seen_label .. '</label><p class="quote">&ldquo;' .. esc(e.first_appearance_quote) .. '&rdquo;</p></div>')
+            end
+            if e.user_notes and e.user_notes ~= "" then
+                p('<div class="field" style="border-top:1px dashed #e0c97a;margin-top:10px;padding-top:10px;"><label>My notes</label><p style="white-space:pre-wrap;">' .. esc(e.user_notes) .. '</p></div>')
+            end
+            p('</div>')
+            p('</div>')
+        end
+    end
+
     p('</body></html>')
 
     local f = io.open(export_path, "w")
@@ -192,10 +268,26 @@ function Export.exportZip(plugin)
 
     os.remove(zip_path)
 
-    -- Build zip: HTML + portraits folder, paths relative to base_dir
+    -- Build zip: HTML + portraits + codex_portraits, paths relative to base_dir
+    local function dirExists(path)
+        local f = io.open(path .. "/.test_probe", "r")
+        if f then f:close() end
+        local h = io.popen('[ -d "' .. path .. '" ] && echo y')
+        local r = h and h:read("*a") or ""
+        if h then h:close() end
+        return r:find("y") ~= nil
+    end
+
+    local zip_files = '"characters.html"'
+    if dirExists(base_dir .. "/portraits")         then zip_files = zip_files .. ' "portraits"' end
+    if dirExists(base_dir .. "/codex_portraits")   then zip_files = zip_files .. ' "codex_portraits"' end
+    local codex_json = base_dir .. "/codex.json"
+    local fc = io.open(codex_json, "r")
+    if fc then fc:close(); zip_files = zip_files .. ' "codex.json"' end
+
     local cmd = string.format(
-        'cd "%s" && zip -r "characters.zip" "characters.html" "portraits" 2>/dev/null; echo $?',
-        base_dir
+        'cd "%s" && zip -r "characters.zip" %s 2>/dev/null; echo $?',
+        base_dir, zip_files
     )
     local handle = io.popen(cmd)
     local result = handle and handle:read("*a") or ""
@@ -204,18 +296,6 @@ function Export.exportZip(plugin)
     UIManager:close(msg)
 
     local exit_code = tonumber(result:match("%d+$") or "1")
-    if exit_code ~= 0 then
-        -- portraits dir might not exist (no images yet) — try without it
-        cmd = string.format(
-            'cd "%s" && zip "characters.zip" "characters.html" 2>/dev/null; echo $?',
-            base_dir
-        )
-        handle = io.popen(cmd)
-        result = handle and handle:read("*a") or ""
-        if handle then handle:close() end
-        exit_code = tonumber(result:match("%d+$") or "1")
-    end
-
     if exit_code ~= 0 then
         plugin:showMsg("ZIP creation failed.\nIs 'zip' available on this device?", 6)
         return
@@ -398,10 +478,19 @@ function Export.uploadToServer(plugin)
     -- -----------------------------------------------------------------------
     -- Step 3: Build tar.gz with all files
     -- -----------------------------------------------------------------------
+    local function dirExists(path)
+        local h = io.popen('[ -d "' .. path .. '" ] && echo y')
+        local r = h and h:read("*a") or ""
+        if h then h:close() end
+        return r:find("y") ~= nil
+    end
+
     os.remove(archive_path)
     local files = '"characters.json" "book_meta.json"'
-    if fileExists(cover_path)               then files = files .. ' "cover.jpg"' end
-    if fileExists(base_dir .. "/portraits") then files = files .. ' "portraits"' end
+    if fileExists(cover_path)                        then files = files .. ' "cover.jpg"' end
+    if dirExists(base_dir .. "/portraits")           then files = files .. ' "portraits"' end
+    if fileExists(base_dir .. "/codex.json")         then files = files .. ' "codex.json"' end
+    if dirExists(base_dir .. "/codex_portraits")     then files = files .. ' "codex_portraits"' end
     logger.info("KoCharacters: upload tar files=" .. files)
 
     os.execute(string.format('cd "%s" && tar -czf "%s" %s 2>/dev/null', base_dir, archive_name, files))

@@ -199,6 +199,13 @@ function UISettings.open(plugin)
                     help     = "The prompt template used when generating a character portrait with Imagen. Controls the visual style, composition, and mood. The character's name and description are appended automatically.",
                 },
                 {
+                    text     = "Edit codex image prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Image Prompt", "kocharacters_codex_portrait_prompt",
+                        Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT) end,
+                    help     = "The prompt template used when generating an image for a codex entry (place, faction, object, etc.) with Imagen. Controls visual style and composition.",
+                },
+                {
                     text     = "Edit merge detection prompt",
                     callback = function() UISettings.editPrompt(plugin,
                         "Merge Detection Prompt", "kocharacters_merge_detection_prompt",

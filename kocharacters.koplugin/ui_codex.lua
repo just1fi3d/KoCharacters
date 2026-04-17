@@ -10,6 +10,7 @@ local Screen      = require("device").screen
 local _           = require("gettext")
 
 local GeminiClient = require("gemini_client")
+local Portrait     = require("portrait")
 local UIShared     = require("ui_shared")
 
 local UICodex = {}
@@ -197,40 +198,51 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
     local name = entry.name or "Unknown"
 
     local function make_buttons(close_fn)
-        return {{
+        return {
             {
-                text = "Edit",
-                callback = function()
-                    close_fn()
-                    UICodex.onEditEntry(plugin, book_id, entry, refresh_browser_fn, function()
+                {
+                    text = "Edit",
+                    callback = function()
+                        close_fn()
+                        UICodex.onEditEntry(plugin, book_id, entry, refresh_browser_fn, function()
+                            local fresh = plugin.db_codex:findByName(book_id, name)
+                            UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
+                        end)
+                    end,
+                },
+                {
+                    text = "Gen. image",
+                    callback = function()
+                        close_fn()
+                        Portrait.onGenerateCodex(plugin, book_id, entry)
                         local fresh = plugin.db_codex:findByName(book_id, name)
                         UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
-                    end)
-                end,
+                    end,
+                },
+                {
+                    text = "Delete",
+                    callback = function()
+                        close_fn()
+                        UIManager:show(ConfirmBox:new{
+                            text        = 'Delete "' .. name .. '" from the codex?',
+                            ok_text     = "Delete",
+                            ok_callback = function()
+                                plugin.db_codex:deleteEntry(book_id, name)
+                                plugin:showMsg('"' .. name .. '" deleted from codex.', 2)
+                                if refresh_browser_fn then refresh_browser_fn() end
+                            end,
+                        })
+                    end,
+                },
+                {
+                    text     = "Close",
+                    callback = function()
+                        close_fn()
+                        if refresh_browser_fn then refresh_browser_fn() end
+                    end,
+                },
             },
-            {
-                text = "Delete",
-                callback = function()
-                    close_fn()
-                    UIManager:show(ConfirmBox:new{
-                        text        = 'Delete "' .. name .. '" from the codex?',
-                        ok_text     = "Delete",
-                        ok_callback = function()
-                            plugin.db_codex:deleteEntry(book_id, name)
-                            plugin:showMsg('"' .. name .. '" deleted from codex.', 2)
-                            if refresh_browser_fn then refresh_browser_fn() end
-                        end,
-                    })
-                end,
-            },
-            {
-                text     = "Close",
-                callback = function()
-                    close_fn()
-                    if refresh_browser_fn then refresh_browser_fn() end
-                end,
-            },
-        }}
+        }
     end
 
     if not G_reader_settings:readSetting("kocharacters_html_viewer") then
@@ -295,13 +307,20 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
         end
     end
 
-    local html_css, html_body = formatHTML(entry, nil, inner_w)
+    local DataStorage    = require("datastorage")
+    local portraits_dir  = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/codex_portraits"
+    local portrait_path  = Portrait.codexPath(book_id, entry)
+    local portrait_fname = nil
+    local pf = io.open(portrait_path, "rb")
+    if pf then pf:close(); portrait_fname = portrait_path:match("([^/]+)$") end
+
+    local html_css, html_body = formatHTML(entry, portrait_fname, inner_w)
 
     UIShared.showHtmlViewer{
         inner_w       = inner_w,
         html_body     = html_body,
         html_css      = html_css,
-        resource_dir  = nil,
+        resource_dir  = portraits_dir,
         close_ref     = viewer_close,
         link_callback = entityLinkCallback,
         make_buttons  = function(close_fn)
