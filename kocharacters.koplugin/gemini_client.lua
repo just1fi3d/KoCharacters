@@ -131,6 +131,22 @@ Passage:
 ---
 ]]
 
+GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT = [[
+You are cleaning up world-building entries from a book. Some text fields may contain repeated or redundant information built up incrementally.
+
+For each entry, clean up these fields:
+- description: remove repetitions, combine fragmented observations into one fluent paragraph
+- significance: same — one coherent statement
+- known_connections: normalize to "Name (relationship)" format, deduplicate
+- aliases: deduplicate, remove entries that are just alternate casings of the name
+
+Return ONLY a valid JSON array (no markdown, no code fences) with the same number of entries in the same order. Each element must have exactly these keys:
+[{ "name": "...", "description": "...", "significance": "...", "known_connections": ["..."], "aliases": ["..."] }]
+
+Entries to clean:
+{{entries}}
+]]
+
 GeminiClient.DEFAULT_CLEANUP_PROMPT = [[
 You are cleaning up a character profile from a book. Some text fields contain repeated or redundant information because they were built up incrementally (e.g. "brave; brave" or "tall, dark hair; tall with dark hair").
 
@@ -568,6 +584,57 @@ Character profiles to clean:
     text = stripCodeFences(text)
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    return result, nil, extractUsage(parsed)
+end
+
+function GeminiClient:cleanCodexEntries(entries, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not entries or #entries == 0 then return {}, nil end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT
+    local prompt = sub(tmpl, "{{entries}}", json.encode(entries))
+
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url     = API_BASE .. "?key=" .. self.api_key,
+        method  = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then return nil, "Gemini returned no text" end
+
+    text = stripCodeFences(text)
+    local result, _, jerr = json.decode(text)
+    if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    if type(result) ~= "table" then return nil, "Expected a JSON array" end
     return result, nil, extractUsage(parsed)
 end
 

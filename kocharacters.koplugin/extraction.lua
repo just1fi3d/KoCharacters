@@ -20,8 +20,9 @@ Extraction.__index = Extraction
 -- deps:
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
---   get_api_key   (function) — returns current Gemini API key string
---   get_prompt    (function) — returns current extraction prompt string
+--   get_api_key              (function) — returns current Gemini API key string
+--   get_prompt               (function) — returns current extraction prompt string
+--   get_codex_update_prompt  (function) — returns current codex update prompt string
 --   get_book_id   (function) — returns current book ID or nil
 --   record_usage  (function) — records API usage stats
 --   show_msg      (function) — shows an InfoMessage toast
@@ -35,9 +36,10 @@ function Extraction.new(deps)
     self.db_codex = deps.db_codex
     self.ui       = deps.ui
     -- Mutable/behavioural deps
-    self._get_api_key     = deps.get_api_key
-    self._get_prompt      = deps.get_prompt
-    self._get_book_id     = deps.get_book_id
+    self._get_api_key              = deps.get_api_key
+    self._get_prompt               = deps.get_prompt
+    self._get_codex_update_prompt  = deps.get_codex_update_prompt
+    self._get_book_id              = deps.get_book_id
     self._record_usage    = deps.record_usage
     self._show_msg        = deps.show_msg
     self._append_log      = deps.append_log
@@ -586,7 +588,8 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
     local resp_file   = tmp_dir .. "/.codex_resp_" .. tostring(pageno) .. ".json"
     os.remove(resp_file)
 
-    local ok, build_err = client:buildCodexRequestFile(req_file, page_text, entries)
+    local ok, build_err = client:buildCodexRequestFile(req_file, page_text, entries,
+        self._get_codex_update_prompt and self._get_codex_update_prompt())
     if not ok then
         logger.warn("KoCharacters: codex buildRequestFile failed: " .. tostring(build_err))
         self._codex_scanned[pageno] = true

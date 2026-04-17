@@ -1,14 +1,16 @@
 -- ui_codex.lua
 -- KoCharacters: Codex browser, viewer, and editor.
 
-local UIManager  = require("ui/uimanager")
-local TextViewer = require("ui/widget/textviewer")
-local ConfirmBox = require("ui/widget/confirmbox")
-local Menu       = require("ui/widget/menu")
-local Screen     = require("device").screen
-local _          = require("gettext")
+local UIManager   = require("ui/uimanager")
+local InfoMessage = require("ui/widget/infomessage")
+local TextViewer  = require("ui/widget/textviewer")
+local ConfirmBox  = require("ui/widget/confirmbox")
+local Menu        = require("ui/widget/menu")
+local Screen      = require("device").screen
+local _           = require("gettext")
 
-local UIShared = require("ui_shared")
+local GeminiClient = require("gemini_client")
+local UIShared     = require("ui_shared")
 
 local UICodex = {}
 
@@ -423,7 +425,11 @@ end
 -- Codex browser
 -- ---------------------------------------------------------------------------
 
-function UICodex.showBrowser(plugin)
+local TYPE_FILTER_CYCLE = { "all", "place", "faction", "concept", "object", "species" }
+
+function UICodex.showBrowser(plugin, type_filter)
+    type_filter = type_filter or "all"
+
     local book_id = plugin:getBookID()
     if not book_id then
         plugin:showMsg("Cannot identify book — is a document open?")
@@ -438,8 +444,16 @@ function UICodex.showBrowser(plugin)
 
     local browser_menu
 
+    -- Filter by type
+    local filtered = {}
+    for _, e in ipairs(entries) do
+        if type_filter == "all" or (e.type or "unknown") == type_filter then
+            table.insert(filtered, e)
+        end
+    end
+
     local sorted = {}
-    for _, e in ipairs(entries) do table.insert(sorted, e) end
+    for _, e in ipairs(filtered) do table.insert(sorted, e) end
     table.sort(sorted, function(a, b)
         local ta = TYPE_ORDER[a.type or "unknown"] or 6
         local tb = TYPE_ORDER[b.type or "unknown"] or 6
@@ -449,30 +463,192 @@ function UICodex.showBrowser(plugin)
 
     local function refresh_browser()
         UIManager:close(browser_menu)
-        UICodex.showBrowser(plugin)
+        UICodex.showBrowser(plugin, type_filter)
     end
+
+    -- Spoiler protection: mask entries whose first_seen_page is ahead of current page
+    if G_reader_settings:readSetting("kocharacters_spoiler_protection") then
+        local cur_page = plugin:getCurrentPage() or 0
+        local masked = {}
+        for _, e in ipairs(sorted) do
+            if not e.unlocked and e.first_seen_page and e.first_seen_page > cur_page then
+                table.insert(masked, { name = "[SPOILER] page " .. e.first_seen_page, _spoiler = true, _real_name = e.name })
+            else
+                table.insert(masked, e)
+            end
+        end
+        sorted = masked
+    end
+
+    -- Find next filter in cycle
+    local next_filter = "all"
+    for i, f in ipairs(TYPE_FILTER_CYCLE) do
+        if f == type_filter then
+            next_filter = TYPE_FILTER_CYCLE[i % #TYPE_FILTER_CYCLE + 1]
+            break
+        end
+    end
+    local filter_label = type_filter == "all"
+        and "[ Filter: All types ]"
+        or  "[ Filter: " .. type_filter:sub(1,1):upper() .. type_filter:sub(2) .. "s ]"
 
     local items = {}
+    table.insert(items, {
+        text     = filter_label,
+        callback = function()
+            UIManager:close(browser_menu)
+            UICodex.showBrowser(plugin, next_filter)
+        end,
+    })
+
     for _, e in ipairs(sorted) do
         local entry      = e
-        local type_badge = (e.type and e.type ~= "" and e.type ~= "unknown")
+        local type_badge = (not e._spoiler and e.type and e.type ~= "" and e.type ~= "unknown")
             and (" [" .. e.type .. "]") or ""
-        table.insert(items, {
-            text     = (e.name or "Unknown") .. type_badge,
-            callback = function()
-                UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser)
-            end,
-        })
+        if e._spoiler then
+            local real_name = e._real_name
+            table.insert(items, {
+                text     = e.name,
+                callback = function()
+                    UIManager:show(ConfirmBox:new{
+                        text        = "Unlock this codex entry and reveal its details?",
+                        ok_text     = "Unlock",
+                        ok_callback = function()
+                            local all = plugin.db_codex:load(book_id)
+                            for _, en in ipairs(all) do
+                                if en.name == real_name then
+                                    en.unlocked = true
+                                    plugin.db_codex:updateEntry(book_id, real_name, en)
+                                    break
+                                end
+                            end
+                            refresh_browser()
+                        end,
+                    })
+                end,
+            })
+        else
+            table.insert(items, {
+                text     = (e.name or "Unknown") .. type_badge,
+                callback = function()
+                    if not entry.unlocked then
+                        entry.unlocked = true
+                        plugin.db_codex:updateEntry(book_id, entry.name, entry)
+                    end
+                    UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser)
+                end,
+            })
+        end
     end
 
-    local count = #entries
+    local count       = #filtered
+    local count_total = #entries
+    local count_str   = type_filter == "all"
+        and (count .. " codex entr" .. (count == 1 and "y" or "ies"))
+        or  (count .. "/" .. count_total .. " codex entr" .. (count == 1 and "y" or "ies"))
     browser_menu = Menu:new{
-        title       = count .. " codex entr" .. (count == 1 and "y" or "ies") .. " \u{2014} " .. plugin:getBookTitle(),
+        title       = count_str .. " \u{2014} " .. plugin:getBookTitle(),
         item_table  = items,
         width       = Screen:getWidth(),
         show_parent = plugin.ui,
     }
     UIManager:show(browser_menu)
+end
+
+-- ---------------------------------------------------------------------------
+-- Cleanup all entries
+-- ---------------------------------------------------------------------------
+
+function UICodex.onCleanupAllEntries(plugin)
+    local book_id = plugin:getBookID()
+    if not book_id then return end
+    local entries = plugin.db_codex:load(book_id)
+    if #entries == 0 then
+        plugin:showMsg("No codex entries to clean up.", 3)
+        return
+    end
+
+    local api_key = plugin:getApiKey()
+    if api_key == "" then
+        plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local BATCH_SIZE = 5
+    local client     = GeminiClient:new(api_key)
+    local total      = #entries
+    local i          = 1
+    local progress_msg
+
+    local function step()
+        if i > total then
+            if progress_msg then UIManager:close(progress_msg); progress_msg = nil end
+            plugin:appendActivityLog(book_id, "Codex cleanup: " .. total .. " entr" .. (total == 1 and "y" or "ies") .. " cleaned")
+            plugin:showMsg("Codex cleanup complete.", 4)
+            return
+        end
+
+        local batch = {}
+        for j = i, math.min(i + BATCH_SIZE - 1, total) do
+            table.insert(batch, entries[j])
+        end
+        local batch_end = math.min(i + BATCH_SIZE - 1, total)
+
+        if progress_msg then UIManager:close(progress_msg) end
+        progress_msg = InfoMessage:new{
+            text = "Cleaning codex entries " .. i .. "–" .. batch_end .. " of " .. total .. "..."
+        }
+        UIManager:show(progress_msg)
+        UIManager:forceRePaint()
+
+        local cleaned, err, usage
+        local ok, call_err = pcall(function()
+            cleaned, err, usage = client:cleanCodexEntries(batch, plugin:getCodexCleanupPrompt())
+        end)
+        UIManager:close(progress_msg); progress_msg = nil
+        if ok and not err then plugin:recordUsage(usage) end
+
+        if not ok then
+            plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+            return
+        end
+        if err then
+            plugin:showMsg("Gemini error:\n" .. tostring(err), 8)
+            return
+        end
+
+        if cleaned and type(cleaned) == "table" then
+            local all_entries = plugin.db_codex:load(book_id)
+            local changed     = false
+            for _, cc in ipairs(cleaned) do
+                if cc.name then
+                    for _, orig in ipairs(all_entries) do
+                        if orig.name == cc.name then
+                            if cc.description       ~= nil then orig.description       = cc.description       end
+                            if cc.significance      ~= nil then orig.significance      = cc.significance      end
+                            if type(cc.known_connections) == "table" then orig.known_connections = cc.known_connections end
+                            if type(cc.aliases)      == "table" then orig.aliases      = cc.aliases           end
+                            changed = true; break
+                        end
+                    end
+                end
+            end
+            if changed then plugin.db_codex:save(book_id, all_entries) end
+        end
+
+        i = i + BATCH_SIZE
+        if i <= total then
+            UIManager:scheduleIn(3, step)
+        else
+            step()
+        end
+    end
+
+    UIManager:show(ConfirmBox:new{
+        text        = "Clean up all " .. total .. " codex entr" .. (total == 1 and "y" or "ies") .. "?\nThis will deduplicate and tidy text fields via Gemini.",
+        ok_text     = "Clean up",
+        ok_callback = function() step() end,
+    })
 end
 
 return UICodex

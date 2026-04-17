@@ -90,9 +90,10 @@ function KoCharacters:init()
         db          = self.db,
         db_codex    = self.db_codex,
         ui          = self.ui,
-        get_api_key = function() return self_ref:getApiKey() end,
-        get_prompt  = function() return self_ref:getExtractionPrompt() end,
-        get_book_id = function() return self_ref:getBookID() end,
+        get_api_key           = function() return self_ref:getApiKey() end,
+        get_prompt            = function() return self_ref:getExtractionPrompt() end,
+        get_codex_update_prompt = function() return self_ref:getCodexUpdatePrompt() end,
+        get_book_id           = function() return self_ref:getBookID() end,
         record_usage = function(u) self_ref:recordUsage(u) end,
         show_msg     = function(t, d) self_ref:showMsg(t, d) end,
         append_log   = function(b, m) self_ref:appendActivityLog(b, m) end,
@@ -298,6 +299,10 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self:onCleanupAllCharacters() end,
             },
             {
+                text     = _("Cleanup all codex entries"),
+                callback = function() self:onCleanupAllCodexEntries() end,
+            },
+            {
                 text     = _("Detect & merge duplicates"),
                 callback = function() self:onMergeDetection() end,
             },
@@ -416,6 +421,21 @@ end
 function KoCharacters:getPortraitPrompt()
     return G_reader_settings:readSetting("kocharacters_portrait_prompt")
         or Portrait.DEFAULT_PORTRAIT_PROMPT
+end
+
+function KoCharacters:getCodexCreatePrompt()
+    return G_reader_settings:readSetting("kocharacters_codex_create_prompt")
+        or GeminiClient.DEFAULT_CODEX_CREATE_PROMPT
+end
+
+function KoCharacters:getCodexUpdatePrompt()
+    return G_reader_settings:readSetting("kocharacters_codex_update_prompt")
+        or GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT
+end
+
+function KoCharacters:getCodexCleanupPrompt()
+    return G_reader_settings:readSetting("kocharacters_codex_cleanup_prompt")
+        or GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT
 end
 
 function KoCharacters:recordUsage(usage)
@@ -537,6 +557,10 @@ function KoCharacters:onCleanupAllCharacters()
     UICharacter.onCleanupAllCharacters(self)
 end
 
+function KoCharacters:onCleanupAllCodexEntries()
+    UICodex.onCleanupAllEntries(self)
+end
+
 function KoCharacters:onMergeDetection()
     UICharacter.onMergeDetection(self)
 end
@@ -583,7 +607,7 @@ function KoCharacters:onTrackInCodex(word)
     os.remove(resp_file)
 
     local client        = GeminiClient:new(api_key)
-    local ok, build_err = client:buildCodexCreateRequestFile(req_file, page_text, word)
+    local ok, build_err = client:buildCodexCreateRequestFile(req_file, page_text, word, self:getCodexCreatePrompt())
     if not ok then
         self:showMsg("Codex: failed to build request: " .. tostring(build_err))
         return
@@ -671,7 +695,7 @@ function KoCharacters:onEnrichCodexFromPage()
     UIManager:forceRePaint()
 
     local client = GeminiClient:new(api_key)
-    local updated, err, usage = client:enrichCodexEntries(page_text, entries)
+    local updated, err, usage = client:enrichCodexEntries(page_text, entries, self:getCodexUpdatePrompt())
     UIManager:close(working)
 
     if err then

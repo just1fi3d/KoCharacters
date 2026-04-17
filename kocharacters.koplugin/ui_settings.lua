@@ -206,6 +206,27 @@ function UISettings.open(plugin)
                     help     = "The prompt used when checking a batch of characters for near-duplicates. Gemini reviews the list and flags entries that likely represent the same character under different names or spellings.",
                 },
                 {
+                    text     = "Edit codex create prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Create Prompt", "kocharacters_codex_create_prompt",
+                        GeminiClient.DEFAULT_CODEX_CREATE_PROMPT) end,
+                    help     = "The prompt used when you long-press a word and tap 'Track in Codex'. Controls how Gemini classifies and describes the new world-building entry.",
+                },
+                {
+                    text     = "Edit codex update prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Update Prompt", "kocharacters_codex_update_prompt",
+                        GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT) end,
+                    help     = "The prompt used during auto-enrichment when known codex entries appear on a scanned page. Controls how Gemini updates existing entries with new context.",
+                },
+                {
+                    text     = "Edit codex cleanup prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Cleanup Prompt", "kocharacters_codex_cleanup_prompt",
+                        GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT) end,
+                    help     = "The prompt used by 'Cleanup all codex entries'. Controls how Gemini deduplicates and tidies description and connection fields.",
+                },
+                {
                     text     = "View book context (auto-built)",
                     callback = function()
                         local bid = plugin:getBookID()
