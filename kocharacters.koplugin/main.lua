@@ -569,10 +569,6 @@ function KoCharacters:onTrackInCodex(word)
     local api_key = self:getApiKey()
     if not api_key or api_key == "" then self:showMsg("API key not set. Configure in settings."); return end
 
-    local working = InfoMessage:new{ text = "Adding \"" .. word .. "\" to codex\u{2026}" }
-    UIManager:show(working)
-    UIManager:forceRePaint()
-
     local page = self:getCurrentPage()
     local page_text = ""
     if page then
@@ -580,24 +576,75 @@ function KoCharacters:onTrackInCodex(word)
         if text then page_text = text end
     end
 
-    local client = GeminiClient:new(api_key)
-    local entry, err, usage = client:createCodexEntry(page_text, word)
-    UIManager:close(working)
+    local DataStorage = require("datastorage")
+    local tmp_dir     = DataStorage:getDataDir() .. "/kocharacters"
+    local req_file    = tmp_dir .. "/.codex_create_req.json"
+    local resp_file   = tmp_dir .. "/.codex_create_resp.json"
+    os.remove(resp_file)
 
-    if err then
-        self:showMsg("Codex: " .. err)
-        self:appendActivityLog(book_id, "Codex: failed to track \"" .. word .. "\": " .. err)
+    local client        = GeminiClient:new(api_key)
+    local ok, build_err = client:buildCodexCreateRequestFile(req_file, page_text, word)
+    if not ok then
+        self:showMsg("Codex: failed to build request: " .. tostring(build_err))
         return
     end
 
-    if usage then self:recordUsage(usage) end
+    local url        = client:asyncExtractUrl()
+    local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
+    local helper     = plugin_dir .. "async_request.lua"
+    local lua_cmd    = string.format(
+        'cd /mnt/us/koreader && ./luajit "%s" "%s" "%s" "%s" >/dev/null 2>&1 &',
+        helper, req_file, url, resp_file)
+    os.execute(lua_cmd)
 
-    entry.name = entry.name or word
-    local _, added = self.db_codex:merge(book_id, { entry }, page)
-    if added > 0 then self.extraction:clearCodexScanned() end
-    local verb = added > 0 and "added to codex." or "updated in codex."
-    self:showMsg("\u{25C8} \"" .. word .. "\" " .. verb, 3)
-    self:appendActivityLog(book_id, "Codex: tracked \"" .. word .. "\" (p." .. tostring(page or "?") .. ")")
+    self.extraction:showScanIndicator()
+
+    local poll_start   = os.time()
+    local poll_timeout = 35
+    local self_ref     = self
+
+    local function poll()
+        if os.time() - poll_start > poll_timeout then
+            os.remove(req_file)
+            os.remove(resp_file)
+            self_ref.extraction:hideScanIndicator()
+            self_ref:showMsg("Codex: request timed out.")
+            return
+        end
+
+        local f = io.open(resp_file, "r")
+        if not f then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+        local size = f:seek("end")
+        f:close()
+        if not size or size == 0 then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+
+        self_ref.extraction:hideScanIndicator()
+        os.remove(req_file)
+        local entry, err, usage = client:parseCodexCreateResponseFile(resp_file)
+        os.remove(resp_file)
+
+        if err then
+            self_ref:showMsg("Codex: " .. err)
+            self_ref:appendActivityLog(book_id, "Codex: failed to track \"" .. word .. "\": " .. err)
+            return
+        end
+
+        if usage then self_ref:recordUsage(usage) end
+        entry.name = entry.name or word
+        local _, added = self_ref.db_codex:merge(book_id, { entry }, page)
+        if added > 0 then self_ref.extraction:clearCodexScanned() end
+        local verb = added > 0 and "added to codex." or "updated in codex."
+        self_ref:showMsg("\u{25C8} \"" .. word .. "\" " .. verb, 3)
+        self_ref:appendActivityLog(book_id, "Codex: tracked \"" .. word .. "\" (p." .. tostring(page or "?") .. ")")
+    end
+
+    UIManager:scheduleIn(1.5, poll)
 end
 
 function KoCharacters:onEnrichCodexFromPage()

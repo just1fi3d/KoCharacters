@@ -334,6 +334,61 @@ function GeminiClient:parseCodexResponseFile(path)
     return result, nil, extractUsage(parsed)
 end
 
+-- Write a codex create request body to a file for async dispatch.
+function GeminiClient:buildCodexCreateRequestFile(path, page_text, name, prompt_template)
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_CREATE_PROMPT
+    local prompt = sub(tmpl, "{{name}}", name)
+    prompt       = sub(prompt, "{{text}}", page_text)
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.2, maxOutputTokens = 4096 },
+    })
+    local f = io.open(path, "w")
+    if not f then return nil, "Could not write codex create request file: " .. path end
+    f:write(request_body)
+    f:close()
+    return true
+end
+
+-- Read and parse a codex create response file; returns entry, nil, usage or nil, err
+function GeminiClient:parseCodexCreateResponseFile(path)
+    local f = io.open(path, "r")
+    if not f then return nil, "Response file not found: " .. path end
+    local raw = f:read("*a")
+    f:close()
+
+    local parsed, _, err = json.decode(raw)
+    if not parsed then
+        return nil, "Failed to parse Gemini response: " .. tostring(err)
+    end
+    if type(parsed) == "table" and parsed.error then
+        local detail = parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(parsed.error.code or "?") .. "): " .. detail
+    end
+
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then
+        local reason = parsed.candidates and parsed.candidates[1]
+            and parsed.candidates[1].finishReason or "unknown"
+        return nil, "Gemini returned no text. Finish reason: " .. reason
+    end
+
+    text = stripCodeFences(text)
+    local entry, _, jerr = json.decode(text)
+    if not entry then
+        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
+    end
+    if type(entry) ~= "table" or type(entry.name) ~= "string" then
+        return nil, "Expected a JSON object with a name field"
+    end
+    return entry, nil, extractUsage(parsed)
+end
+
 -- Returns the full extraction API URL with key for use in async curl commands
 function GeminiClient:asyncExtractUrl()
     return API_BASE .. "?key=" .. self.api_key
