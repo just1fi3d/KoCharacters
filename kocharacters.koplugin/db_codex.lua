@@ -165,18 +165,29 @@ function CodexDB:isNameKnown(book_md5, name_or_alias)
     return self:findByName(book_md5, name_or_alias) ~= nil
 end
 
--- Returns entries whose name or any alias appears in page_text (case-insensitive)
+-- Word-boundary match: single-word terms use frontier patterns to avoid substring false
+-- positives (e.g. alias "resonant" matching "dissonant"). Multi-word terms fall back to
+-- plain substring since frontier patterns don't span spaces reliably.
+local function termInText(lower_term, lower_text)
+    if lower_term:find("%s") then
+        return lower_text:find(lower_term, 1, true) ~= nil
+    end
+    local escaped = lower_term:gsub("([%(%)%.%%%+%-%*%?%[%^%$])", "%%%1")
+    return lower_text:find("%f[%w]" .. escaped .. "%f[%W]") ~= nil
+end
+
+-- Returns entries whose name or any alias appears in page_text (case-insensitive, word-boundary)
 function CodexDB:getEntriesForPage(book_md5, page_text)
     local lower_text = page_text:lower()
     local matched = {}
     for _, e in ipairs(self:load(book_md5)) do
         local found = false
-        if e.name and lower_text:find(e.name:lower(), 1, true) then
+        if e.name and termInText(e.name:lower(), lower_text) then
             found = true
         end
         if not found then
             for _, alias in ipairs(e.aliases or {}) do
-                if alias ~= "" and lower_text:find(alias:lower(), 1, true) then
+                if alias ~= "" and termInText(alias:lower(), lower_text) then
                     found = true
                     break
                 end
