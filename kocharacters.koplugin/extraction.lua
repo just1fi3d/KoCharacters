@@ -20,8 +20,9 @@ Extraction.__index = Extraction
 -- deps:
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
---   get_api_key   (function) — returns current Gemini API key string
---   get_prompt    (function) — returns current extraction prompt string
+--   get_api_key              (function) — returns current Gemini API key string
+--   get_prompt               (function) — returns current extraction prompt string
+--   get_codex_update_prompt  (function) — returns current codex update prompt string
 --   get_book_id   (function) — returns current book ID or nil
 --   record_usage  (function) — records API usage stats
 --   show_msg      (function) — shows an InfoMessage toast
@@ -31,12 +32,14 @@ Extraction.__index = Extraction
 function Extraction.new(deps)
     local self = setmetatable({}, Extraction)
     -- Static values
-    self.db = deps.db
-    self.ui = deps.ui
+    self.db       = deps.db
+    self.db_codex = deps.db_codex
+    self.ui       = deps.ui
     -- Mutable/behavioural deps
-    self._get_api_key     = deps.get_api_key
-    self._get_prompt      = deps.get_prompt
-    self._get_book_id     = deps.get_book_id
+    self._get_api_key              = deps.get_api_key
+    self._get_prompt               = deps.get_prompt
+    self._get_codex_update_prompt  = deps.get_codex_update_prompt
+    self._get_book_id              = deps.get_book_id
     self._record_usage    = deps.record_usage
     self._show_msg        = deps.show_msg
     self._append_log      = deps.append_log
@@ -53,6 +56,9 @@ function Extraction.new(deps)
     self._pending_notified = false
     -- Page-count cache for scanned-history invalidation
     self._cached_page_count     = nil
+    -- In-memory set of pages where codex enrichment has run this session.
+    -- Cleared when a new codex entry is added so new entries get picked up.
+    self._codex_scanned         = {}
     -- Indicator widget state
     self._scan_indicator        = nil
     self._count_indicator       = nil
@@ -187,6 +193,42 @@ function Extraction:showExtractError()
     UIManager:scheduleIn(4, self._count_indicator_timer)
 end
 
+function Extraction:showCodexExtractedCount(count)
+    if self._count_indicator then
+        UIManager:close(self._count_indicator)
+        if self._count_indicator_timer then
+            UIManager:unschedule(self._count_indicator_timer)
+        end
+    end
+    local FrameContainer = require("ui/widget/container/framecontainer")
+    local TextWidget     = require("ui/widget/textwidget")
+    local Font           = require("ui/font")
+    local Blitbuffer     = require("ffi/blitbuffer")
+    self._count_indicator = FrameContainer:new{
+        toast      = true,
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 0,
+        padding    = 4,
+        TextWidget:new{
+            text = "\u{25C8} " .. tostring(count),
+            face = Font:getFace("cfont", 20),
+        },
+    }
+    UIManager:show(self._count_indicator)
+    UIManager:setDirty(self._count_indicator, "fast")
+    UIManager:forceRePaint()
+    self._count_indicator_timer = function()
+        self._count_indicator_timer = nil
+        if self._count_indicator then
+            UIManager:close(self._count_indicator)
+            UIManager:setDirty(nil, "fast")
+            UIManager:forceRePaint()
+            self._count_indicator = nil
+        end
+    end
+    UIManager:scheduleIn(4, self._count_indicator_timer)
+end
+
 -- ---------------------------------------------------------------------------
 -- Scanned-history invalidation
 -- ---------------------------------------------------------------------------
@@ -232,7 +274,11 @@ function Extraction:onPageChanged(pageno)
 
     self:_checkAndInvalidateScannedPages(book_id)
 
-    if self.db:isPageScanned(book_id, pageno) then return end
+    local char_scanned = self.db:isPageScanned(book_id, pageno)
+    if char_scanned then
+        if self._codex_scanned[pageno] then return end
+        if #self.db_codex:load(book_id) == 0 then return end
+    end
 
     -- Re-render the indicator so it survives the e-ink page-turn refresh
     if self._extract_running and self._scan_indicator then
@@ -243,7 +289,7 @@ function Extraction:onPageChanged(pageno)
     self._pending_extract = function()
         self._pending_extract = nil
         if self:_getCurrentPage() ~= pageno then return end
-        self:_enqueueExtract(pageno)
+        self:_enqueuePageJobs(pageno, char_scanned)
     end
     UIManager:scheduleIn(delay, self._pending_extract)
 end
@@ -298,22 +344,33 @@ function Extraction:cleanup()
     if self._curl_resp_file then os.remove(self._curl_resp_file); self._curl_resp_file = nil end
     self._extract_queue   = {}
     self._extract_running = false
+    self._codex_scanned   = {}
 end
 
 -- ---------------------------------------------------------------------------
 -- Async queue
 -- ---------------------------------------------------------------------------
 
-function Extraction:_enqueueExtract(pageno)
+-- char_scanned: true if the character page-scan is already done (codex-only job)
+function Extraction:_enqueuePageJobs(pageno, char_scanned)
     local book_id = self._get_book_id()
     if not book_id then return end
-    if self.db:isPageScanned(book_id, pageno) then return end
 
-    for _, p in ipairs(self._extract_queue) do
-        if p == pageno then return end
+    local has_char, has_codex = false, false
+    for _, job in ipairs(self._extract_queue) do
+        if job.pageno == pageno then
+            if job.type == "character" then has_char = true end
+            if job.type == "codex"     then has_codex = true end
+        end
     end
 
-    table.insert(self._extract_queue, pageno)
+    if not char_scanned and not has_char then
+        -- Character job also runs codex enrichment on the same page text
+        table.insert(self._extract_queue, { type = "character", pageno = pageno })
+    elseif char_scanned and not has_codex then
+        table.insert(self._extract_queue, { type = "codex", pageno = pageno })
+    end
+
     if not self._extract_running then
         self:_processNextInQueue()
     end
@@ -334,9 +391,21 @@ function Extraction:_processNextInQueue()
     end
 
     self._extract_running = true
-    local pageno  = table.remove(self._extract_queue, 1)
+    local job     = table.remove(self._extract_queue, 1)
     local book_id = self._get_book_id()
     if not book_id then self:_processNextInQueue(); return end
+
+    if job.type == "character" then
+        self:_processCharacterJob(job, book_id)
+    elseif job.type == "codex" then
+        self:_processCodexJob(job, book_id)
+    else
+        self:_processNextInQueue()
+    end
+end
+
+function Extraction:_processCharacterJob(job, book_id)
+    local pageno = job.pageno
 
     -- Re-check: page may have been scanned by a previous queue item
     if self.db:isPageScanned(book_id, pageno) then
@@ -368,14 +437,14 @@ function Extraction:_processNextInQueue()
         else table.insert(skip_names, c.name) end
     end
 
-    -- Write request file
     local DataStorage    = require("datastorage")
     local tmp_dir        = DataStorage:getDataDir() .. "/kocharacters"
     self._curl_req_file  = tmp_dir .. "/.async_req_"  .. tostring(pageno) .. ".json"
     self._curl_resp_file = tmp_dir .. "/.async_resp_" .. tostring(pageno) .. ".json"
-    os.remove(self._curl_resp_file)  -- ensure no stale response
+    os.remove(self._curl_resp_file)
 
-    local client = GeminiClient:new(api_key)
+    local api_key    = self._get_api_key()
+    local client     = GeminiClient:new(api_key)
     local ok, build_err = client:buildRequestFile(
         self._curl_req_file, page_text, skip_names, chars_in_text,
         self._get_prompt(), self.db:loadBookContext(book_id))
@@ -387,10 +456,6 @@ function Extraction:_processNextInQueue()
         return
     end
 
-    -- Launch a background luajit subprocess to perform the HTTPS request.
-    -- curl is not available on this Kindle, so we use KOReader's own luajit
-    -- binary with ssl.https.  We cd to the KOReader base dir first so that
-    -- setupkoenv.lua's relative package paths resolve correctly.
     local url        = client:asyncExtractUrl()
     local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
     local helper     = plugin_dir .. "async_request.lua"
@@ -402,9 +467,8 @@ function Extraction:_processNextInQueue()
 
     self:showScanIndicator()
 
-    -- Begin polling
     local poll_start   = os.time()
-    local poll_timeout = 35  -- slightly longer than curl --max-time
+    local poll_timeout = 35
     local page_ref     = pageno
     local book_ref     = book_id
     local resp_file    = self._curl_resp_file
@@ -423,7 +487,6 @@ function Extraction:_processNextInQueue()
             return
         end
 
-        -- Check if response file exists and is non-empty
         local f = io.open(resp_file, "r")
         if not f then
             self_ref._poll_timer = function() poll() end
@@ -438,7 +501,6 @@ function Extraction:_processNextInQueue()
             return
         end
 
-        -- Response is ready — parse it
         logger.info("KoCharacters: async response ready page=" .. tostring(page_ref) .. " size=" .. tostring(size))
         os.remove(req_file)
         local characters, api_err, usage, book_context = client:parseResponseFile(resp_file)
@@ -469,8 +531,10 @@ function Extraction:_processNextInQueue()
 
         if not characters or #characters == 0 then
             self_ref:showExtractedCount(0)
-            self_ref:_checkAndPromptPendingPages(book_ref)
-            self_ref:_processNextInQueue()
+            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
+                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_processNextInQueue()
+            end)
             return
         end
 
@@ -480,13 +544,128 @@ function Extraction:_processNextInQueue()
             end
             self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found")
             self_ref:showExtractedCount(#characters)
-            self_ref:_checkAndPromptPendingPages(book_ref)
-            self_ref:_processNextInQueue()
+            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
+                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_processNextInQueue()
+            end)
         end, page_ref, true)
     end
 
     self._poll_timer = function() poll() end
     UIManager:scheduleIn(1.5, self._poll_timer)
+end
+
+function Extraction:_processCodexJob(job, book_id)
+    local pageno    = job.pageno
+    local page_text = EpubReader.getPageText(self.ui.document, pageno)
+    if not page_text or #page_text < 20 then
+        self:_processNextInQueue()
+        return
+    end
+    self:_runCodexEnrichment(book_id, pageno, page_text, function()
+        self:_processNextInQueue()
+    end)
+end
+
+-- Async codex enrichment — spawns a subprocess and polls, then calls on_done when finished.
+function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
+    if self._codex_scanned[pageno] then
+        if on_done then on_done() end
+        return
+    end
+
+    local entries = self.db_codex:getEntriesForPage(book_id, page_text)
+    if #entries == 0 then
+        if on_done then on_done() end
+        return
+    end
+
+    self:showScanIndicator()
+
+    local api_key     = self._get_api_key()
+    local client      = GeminiClient:new(api_key)
+    local DataStorage = require("datastorage")
+    local tmp_dir     = DataStorage:getDataDir() .. "/kocharacters"
+    local req_file    = tmp_dir .. "/.codex_req_"  .. tostring(pageno) .. ".json"
+    local resp_file   = tmp_dir .. "/.codex_resp_" .. tostring(pageno) .. ".json"
+    os.remove(resp_file)
+
+    local ok, build_err = client:buildCodexRequestFile(req_file, page_text, entries,
+        self._get_codex_update_prompt and self._get_codex_update_prompt())
+    if not ok then
+        logger.warn("KoCharacters: codex buildRequestFile failed: " .. tostring(build_err))
+        self._codex_scanned[pageno] = true
+        if on_done then on_done() end
+        return
+    end
+
+    local url        = client:asyncExtractUrl()
+    local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
+    local helper     = plugin_dir .. "async_request.lua"
+    local lua_cmd    = string.format(
+        'cd /mnt/us/koreader && ./luajit "%s" "%s" "%s" "%s" >/dev/null 2>&1 &',
+        helper, req_file, url, resp_file)
+    logger.info("KoCharacters: codex async launch page=" .. tostring(pageno))
+    os.execute(lua_cmd)
+
+    local poll_start   = os.time()
+    local poll_timeout = 35
+    local self_ref     = self
+
+    local function poll()
+        if os.time() - poll_start > poll_timeout then
+            logger.warn("KoCharacters: codex poll timeout page=" .. tostring(pageno))
+            os.remove(req_file)
+            os.remove(resp_file)
+            if on_done then on_done() end
+            return
+        end
+
+        local f = io.open(resp_file, "r")
+        if not f then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+        local size = f:seek("end")
+        f:close()
+        if not size or size == 0 then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+
+        os.remove(req_file)
+        local updated, api_err, usage = client:parseCodexResponseFile(resp_file)
+        os.remove(resp_file)
+
+        if api_err then
+            local is_retryable = type(api_err) == "string"
+                and (api_err:find("Network error") or api_err:find("503")
+                     or api_err:find("429") or api_err:find("quota") or api_err:find("overload"))
+            if is_retryable then
+                self_ref:showExtractError()
+                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry")
+            else
+                self_ref._codex_scanned[pageno] = true
+            end
+            if on_done then on_done() end
+            return
+        end
+
+        if usage then self_ref._record_usage(usage) end
+        self_ref._codex_scanned[pageno] = true
+        if updated and #updated > 0 then
+            self_ref.db_codex:merge(book_id, updated, pageno)
+            self_ref:showCodexExtractedCount(#updated)
+            self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
+        end
+        if on_done then on_done() end
+    end
+
+    UIManager:scheduleIn(1.5, poll)
+end
+
+function Extraction:clearCodexScanned()
+    self._codex_scanned = {}
 end
 
 -- ---------------------------------------------------------------------------

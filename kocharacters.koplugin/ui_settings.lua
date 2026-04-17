@@ -199,11 +199,39 @@ function UISettings.open(plugin)
                     help     = "The prompt template used when generating a character portrait with Imagen. Controls the visual style, composition, and mood. The character's name and description are appended automatically.",
                 },
                 {
+                    text     = "Edit codex image prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Image Prompt", "kocharacters_codex_portrait_prompt",
+                        Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT) end,
+                    help     = "The prompt template used when generating an image for a codex entry (place, faction, object, etc.) with Imagen. Controls visual style and composition.",
+                },
+                {
                     text     = "Edit merge detection prompt",
                     callback = function() UISettings.editPrompt(plugin,
                         "Merge Detection Prompt", "kocharacters_merge_detection_prompt",
                         GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT) end,
                     help     = "The prompt used when checking a batch of characters for near-duplicates. Gemini reviews the list and flags entries that likely represent the same character under different names or spellings.",
+                },
+                {
+                    text     = "Edit codex create prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Create Prompt", "kocharacters_codex_create_prompt",
+                        GeminiClient.DEFAULT_CODEX_CREATE_PROMPT) end,
+                    help     = "The prompt used when you long-press a word and tap 'Track in Codex'. Controls how Gemini classifies and describes the new world-building entry.",
+                },
+                {
+                    text     = "Edit codex update prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Update Prompt", "kocharacters_codex_update_prompt",
+                        GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT) end,
+                    help     = "The prompt used during auto-enrichment when known codex entries appear on a scanned page. Controls how Gemini updates existing entries with new context.",
+                },
+                {
+                    text     = "Edit codex cleanup prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Codex Cleanup Prompt", "kocharacters_codex_cleanup_prompt",
+                        GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT) end,
+                    help     = "The prompt used by 'Cleanup all codex entries'. Controls how Gemini deduplicates and tidies description and connection fields.",
                 },
                 {
                     text     = "View book context (auto-built)",
@@ -381,8 +409,8 @@ function UISettings.open(plugin)
             },
             {
                 text_func = function()
-                    return "Character detail view: "
-                        .. (G_reader_settings:readSetting("kocharacters_html_viewer") and "HTML (with portrait)" or "Text")
+                    return "Detail view: "
+                        .. (G_reader_settings:readSetting("kocharacters_html_viewer") and "HTML" or "Text")
                 end,
                 callback = function()
                     local on = G_reader_settings:readSetting("kocharacters_html_viewer")
@@ -390,7 +418,7 @@ function UISettings.open(plugin)
                     UIManager:close(settings_menu)
                     UISettings.open(plugin)
                 end,
-                help     = "Text mode shows plain character info in a scrollable text viewer.\nHTML mode renders a richer layout and displays the AI-generated portrait image (if one has been created for that character).",
+                help     = "Text mode shows plain info in a scrollable text viewer.\nHTML mode renders a richer layout and displays AI-generated portrait images.",
             },
             {
                 text     = "View API usage",

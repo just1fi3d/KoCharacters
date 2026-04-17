@@ -236,4 +236,122 @@ function Portrait.batchGenerate(plugin)
     showSelectionMenu()
 end
 
+Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT = [[Visual depiction of a fictional {{type}} from a book. Square composition, 1024x1024. No text. No words. No letters. No labels. No watermarks. No inscriptions. Pure image only. Subject: {{name}}. Description: {{description}} Significance: {{significance}} Book setting: {{book_context}} Paint in a rich, detailed style consistent with the book's setting and era. The image should serve as an encyclopaedia illustration — evocative, accurate, and atmospheric.]]
+
+-- Returns the absolute path where a portrait for this codex entry should be stored.
+function Portrait.codexPath(book_id, entry)
+    local DataStorage = require("datastorage")
+    local util        = require("util")
+    local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/codex_portraits"
+    util.makePath(dir)
+    local filename = (entry.id and entry.id ~= "") and (entry.id .. ".png")
+                     or (portraitSafeName(entry.name or "unknown") .. ".png")
+    return dir .. "/" .. filename
+end
+
+-- Returns true if a portrait image file exists for this codex entry.
+function Portrait.codexHas(book_id, entry)
+    local path = Portrait.codexPath(book_id, entry)
+    local f = io.open(path, "rb")
+    if f then f:close(); return true end
+    return false
+end
+
+-- Core generation for a codex entry: calls Imagen, decodes, saves.
+-- Returns nil on success, or an error string on failure.
+function Portrait.generateCodex(plugin, book_id, entry)
+    local DataStorage = require("datastorage")
+    local json        = require("dkjson")
+    local util        = require("util")
+    local portraits_dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id .. "/codex_portraits"
+    util.makePath(portraits_dir)
+
+    local name  = entry.name or "Unknown"
+    local etype = entry.type or "concept"
+    local desc  = entry.description or ""
+    local sig   = entry.significance or ""
+
+    local function sub(s, key, val)
+        return (s:gsub("{{" .. key .. "}}", function() return val end))
+    end
+
+    local book_context = plugin.db:loadBookContext(book_id)
+    local tmpl   = G_reader_settings:readSetting("kocharacters_codex_portrait_prompt")
+                   or Portrait.DEFAULT_CODEX_PORTRAIT_PROMPT
+    local prompt = sub(sub(sub(sub(sub(tmpl,
+        "name", name), "type", etype), "description", desc),
+        "significance", sig), "book_context", book_context)
+
+    local api_key   = plugin:getImagenApiKey()
+    local out_path  = Portrait.codexPath(book_id, entry)
+    local req_file  = portraits_dir .. "/.imagen_req.json"
+    local resp_file = portraits_dir .. "/.imagen_resp.json"
+
+    local fq = io.open(req_file, "w")
+    if not fq then return "Could not write request file." end
+    fq:write(json.encode({
+        instances  = {{ prompt = prompt }},
+        parameters = { sampleCount = 1, aspectRatio = "1:1" },
+    }))
+    fq:close()
+
+    local imagen_model = G_reader_settings:readSetting("kocharacters_imagen_model")
+                         or "imagen-4.0-fast-generate-001"
+    local url = "https://generativelanguage.googleapis.com/v1beta/models/"
+                .. imagen_model .. ":predict?key=" .. api_key
+    os.execute(string.format(
+        'curl -s --max-time 120 -X POST -H "Content-Type: application/json" -d @"%s" "%s" -o "%s"',
+        req_file, url, resp_file
+    ))
+    os.remove(req_file)
+
+    local f = io.open(resp_file, "r")
+    if not f then return "No response from Imagen API." end
+    local raw = f:read("*a")
+    f:close()
+    os.remove(resp_file)
+
+    local parsed = json.decode(raw)
+    if not parsed then return "Could not parse Imagen response:\n" .. raw:sub(1, 200) end
+    if parsed.error then
+        return "Imagen error:\n" .. (parsed.error.message or json.encode(parsed.error))
+    end
+
+    local b64 = parsed.predictions
+                and parsed.predictions[1]
+                and parsed.predictions[1].bytesBase64Encoded
+    if not b64 or b64 == "" then
+        return "Imagen returned no image.\n" .. raw:sub(1, 200)
+    end
+
+    local tmp_b64 = portraits_dir .. "/.tmp_b64"
+    local fb = io.open(tmp_b64, "w")
+    if not fb then return "Could not write temp file." end
+    fb:write(b64)
+    fb:close()
+
+    local ret = os.execute('base64 -d "' .. tmp_b64 .. '" > "' .. out_path .. '"')
+    os.remove(tmp_b64)
+    if ret ~= 0 then return "Failed to decode portrait image." end
+
+    plugin:recordUsage({ images = 1 })
+    return nil
+end
+
+-- Shows progress UI, calls Portrait.generateCodex, shows result.
+function Portrait.onGenerateCodex(plugin, book_id, entry)
+    local msg = InfoMessage:new{
+        text = "Generating image for " .. (entry.name or "entry") .. "…"
+    }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+    local err = Portrait.generateCodex(plugin, book_id, entry)
+    UIManager:close(msg)
+    if err then
+        plugin:showMsg(err, 8)
+    else
+        plugin:showMsg("Image saved for " .. (entry.name or "entry") .. ".", 3)
+    end
+end
+
 return Portrait
