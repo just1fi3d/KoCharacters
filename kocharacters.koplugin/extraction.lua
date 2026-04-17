@@ -54,6 +54,9 @@ function Extraction.new(deps)
     self._pending_notified = false
     -- Page-count cache for scanned-history invalidation
     self._cached_page_count     = nil
+    -- In-memory set of pages where codex enrichment has run this session.
+    -- Cleared when a new codex entry is added so new entries get picked up.
+    self._codex_scanned         = {}
     -- Indicator widget state
     self._scan_indicator        = nil
     self._count_indicator       = nil
@@ -270,7 +273,10 @@ function Extraction:onPageChanged(pageno)
     self:_checkAndInvalidateScannedPages(book_id)
 
     local char_scanned = self.db:isPageScanned(book_id, pageno)
-    if char_scanned and #self.db_codex:load(book_id) == 0 then return end
+    if char_scanned then
+        if self._codex_scanned[pageno] then return end
+        if #self.db_codex:load(book_id) == 0 then return end
+    end
 
     -- Re-render the indicator so it survives the e-ink page-turn refresh
     if self._extract_running and self._scan_indicator then
@@ -336,6 +342,7 @@ function Extraction:cleanup()
     if self._curl_resp_file then os.remove(self._curl_resp_file); self._curl_resp_file = nil end
     self._extract_queue   = {}
     self._extract_running = false
+    self._codex_scanned   = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -558,6 +565,8 @@ end
 
 -- Synchronous codex enrichment — called after character job completes or as a standalone job.
 function Extraction:_runCodexEnrichment(book_id, pageno, page_text)
+    if self._codex_scanned[pageno] then return end
+
     local entries = self.db_codex:getEntriesForPage(book_id, page_text)
     if #entries == 0 then return end
 
@@ -577,15 +586,22 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text)
         if is_retryable then
             self:showExtractError()
             self._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry")
+        else
+            self._codex_scanned[pageno] = true
         end
         return
     end
 
+    self._codex_scanned[pageno] = true
     if updated and #updated > 0 then
         self.db_codex:merge(book_id, updated, pageno)
         self:showCodexExtractedCount(#updated)
         self._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
     end
+end
+
+function Extraction:clearCodexScanned()
+    self._codex_scanned = {}
 end
 
 -- ---------------------------------------------------------------------------

@@ -594,6 +594,7 @@ function KoCharacters:onTrackInCodex(word)
 
     entry.name = entry.name or word
     local _, added = self.db_codex:merge(book_id, { entry }, page)
+    if added > 0 then self.extraction:clearCodexScanned() end
     local verb = added > 0 and "added to codex." or "updated in codex."
     self:showMsg("\u{25C8} \"" .. word .. "\" " .. verb, 3)
     self:appendActivityLog(book_id, "Codex: tracked \"" .. word .. "\" (p." .. tostring(page or "?") .. ")")
