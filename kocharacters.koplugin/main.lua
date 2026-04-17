@@ -12,10 +12,13 @@ local _               = require("gettext")
 local Dispatcher   = require("dispatcher")
 local GeminiClient = require("gemini_client")
 local DBCharacter  = require("db_character")
+local DBCodex      = require("db_codex")
 local Portrait     = require("portrait")
 local Export       = require("export")
 local UISettings   = require("ui_settings")
 local UICharacter  = require("ui_character")
+local UICodex      = require("ui_codex")
+local EpubReader   = require("epub_reader")
 local Extraction   = require("extraction")
 
 local function portraitSafeName(name)
@@ -77,7 +80,8 @@ function KoCharacters:onCharViewUsage()        self:onViewUsage() end
 function KoCharacters:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
 function KoCharacters:init()
-    self.db = DBCharacter
+    self.db       = DBCharacter
+    self.db_codex = DBCodex
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
@@ -117,6 +121,33 @@ function KoCharacters:init()
                     pcall(function() highlight_instance:clear() end)
                     UIManager:scheduleIn(0.1, function()
                         UICharacter.onWordCharacterLookup(self_ref, word)
+                    end)
+                end,
+            }
+        end)
+    end
+
+    -- Add "Track in Codex" / "View in Codex" to the highlight popup
+    if self.ui.highlight and self.ui.highlight.addToHighlightDialog then
+        self.ui.highlight:addToHighlightDialog("kocharacters_codex", function(highlight_instance)
+            local selected = highlight_instance.selected_text
+            local word = selected and (selected.text or selected.word or "") or ""
+            word = word:match("^%s*(.-)%s*$") or ""
+            local book_id  = self_ref:getBookID()
+            local is_known = book_id and word ~= "" and self_ref.db_codex:isNameKnown(book_id, word)
+            return {
+                text = is_known and "View in Codex" or "Track in Codex",
+                callback = function()
+                    if highlight_instance.highlight_dialog then
+                        UIManager:close(highlight_instance.highlight_dialog)
+                    end
+                    pcall(function() highlight_instance:clear() end)
+                    UIManager:scheduleIn(0.1, function()
+                        if is_known then
+                            UICodex.showEntryViewer(self_ref, book_id, self_ref.db_codex:findByName(book_id, word))
+                        else
+                            self_ref:onTrackInCodex(word)
+                        end
                     end)
                 end,
             }
@@ -234,6 +265,10 @@ function KoCharacters:addToMainMenu(menu_items)
                 callback = function() self.extraction:onExtractCurrentPage() end,
             },
             {
+                text     = _("Extract codex entries from this page"),
+                callback = function() self:onEnrichCodexFromPage() end,
+            },
+            {
                 text     = _("Scan current chapter"),
                 callback = function() self.extraction:onScanChapter() end,
             },
@@ -244,6 +279,10 @@ function KoCharacters:addToMainMenu(menu_items)
             {
                 text     = _("View saved characters"),
                 callback = function() self:onViewCharacters() end,
+            },
+            {
+                text     = _("View saved codex entries"),
+                callback = function() UICodex.showBrowser(self) end,
             },
             {
                 text     = _("Re-analyze character"),
@@ -517,6 +556,91 @@ end
 
 function KoCharacters:onWordCharacterLookup(word)
     UICharacter.onWordCharacterLookup(self, word)
+end
+
+-- ---------------------------------------------------------------------------
+-- Codex actions
+-- ---------------------------------------------------------------------------
+
+function KoCharacters:onTrackInCodex(word)
+    local book_id = self:getBookID()
+    if not book_id then self:showMsg("Cannot determine book ID."); return end
+    local api_key = self:getApiKey()
+    if not api_key or api_key == "" then self:showMsg("API key not set. Configure in settings."); return end
+
+    local working = InfoMessage:new{ text = "Adding \"" .. word .. "\" to codex\u{2026}" }
+    UIManager:show(working)
+    UIManager:forceRePaint()
+
+    local page = self:getCurrentPage()
+    local page_text = ""
+    if page then
+        local text = EpubReader.getPageText(self.ui.document, page)
+        if text then page_text = text end
+    end
+
+    local client = GeminiClient:new(api_key)
+    local entry, err, usage = client:createCodexEntry(page_text, word)
+    UIManager:close(working)
+
+    if err then
+        self:showMsg("Codex: " .. err)
+        self:appendActivityLog(book_id, "Codex: failed to track \"" .. word .. "\": " .. err)
+        return
+    end
+
+    if usage then self:recordUsage(usage) end
+
+    entry.name = entry.name or word
+    local _, added = self.db_codex:merge(book_id, { entry }, page)
+    local verb = added > 0 and "added to codex." or "updated in codex."
+    self:showMsg("\u{25C8} \"" .. word .. "\" " .. verb, 3)
+    self:appendActivityLog(book_id, "Codex: tracked \"" .. word .. "\" (p." .. tostring(page or "?") .. ")")
+end
+
+function KoCharacters:onEnrichCodexFromPage()
+    local book_id = self:getBookID()
+    if not book_id then self:showMsg("Cannot determine book ID."); return end
+    local api_key = self:getApiKey()
+    if not api_key or api_key == "" then self:showMsg("API key not set. Configure in settings."); return end
+
+    local page = self:getCurrentPage()
+    local page_text = ""
+    if page then
+        local text = EpubReader.getPageText(self.ui.document, page)
+        if text then page_text = text end
+    end
+
+    local entries = self.db_codex:getEntriesForPage(book_id, page_text)
+    if #entries == 0 then
+        self:showMsg("No tracked codex entries found on this page.")
+        return
+    end
+
+    local working = InfoMessage:new{ text = "Enriching " .. #entries .. " codex entr" .. (#entries == 1 and "y" or "ies") .. "\u{2026}" }
+    UIManager:show(working)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local updated, err, usage = client:enrichCodexEntries(page_text, entries)
+    UIManager:close(working)
+
+    if err then
+        self:showMsg("Codex: " .. err)
+        self:appendActivityLog(book_id, "Codex enrich p." .. tostring(page or "?") .. ": " .. err)
+        return
+    end
+
+    if usage then self:recordUsage(usage) end
+
+    if not updated or #updated == 0 then
+        self:showMsg("Codex: no entries updated (none appeared in this passage).")
+        return
+    end
+
+    self.db_codex:merge(book_id, updated, page)
+    self:showMsg("\u{25C8} " .. #updated .. " codex entr" .. (#updated == 1 and "y" or "ies") .. " updated.", 3)
+    self:appendActivityLog(book_id, "Codex enrich p." .. tostring(page or "?") .. ": " .. #updated .. " updated")
 end
 
 return KoCharacters

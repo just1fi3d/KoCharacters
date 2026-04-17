@@ -654,6 +654,205 @@ function GeminiClient:buildRelationshipMap(characters, prompt_template)
     return text:match("^%s*(.-)%s*$"), nil, extractUsage(parsed)
 end
 
+-- ---------------------------------------------------------------------------
+-- Codex
+-- ---------------------------------------------------------------------------
+
+GeminiClient.DEFAULT_CODEX_CREATE_PROMPT = [[
+You are analyzing a passage from a novel or book.
+
+A reader has flagged the following term for tracking: "{{name}}"
+
+Your tasks:
+1. Determine the entity type: place, faction, concept, object, or species.
+2. Populate a codex entry based on the passage.
+
+Rules:
+- description: synthesised summary of what this thing is. Write as a concise unified description, not a scene summary.
+- significance: why it matters to the story. Leave empty string if this passage doesn't establish it clearly.
+- known_connections: named characters, places, factions, or other entities associated with this term in the passage. Format each entry as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)", "Lord Vance (founder)". One entry per named entity. Empty array if none found.
+- aliases: alternate names, abbreviations, and derived word forms found in the passage. Include practitioner titles, adjective forms, and plural forms (e.g. for "Vivimancy": "vivimancer", "vivimancers", "vivimantic"). Empty array if none found.
+- first_appearance_quote: a short verbatim quote from the passage where this term first appears.
+- If the passage doesn't contain enough information to meaningfully describe this term, return just the type and a one-sentence description. Do not fabricate details.
+
+Return ONLY a valid JSON object (no markdown, no code fences, no explanation):
+{
+  "name": "{{name}}",
+  "type": "place or faction or concept or object or species",
+  "description": "...",
+  "significance": "...",
+  "known_connections": ["Name (relationship) — one entry per named entity"],
+  "aliases": ["..."],
+  "first_appearance_quote": "..."
+}
+
+Passage:
+---
+{{text}}
+---
+]]
+
+GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT = [[
+You are updating codex entries for a novel based on a new passage.
+
+The entries below are world-building elements already tracked by the reader.
+
+For each entry that appears in this passage:
+- Rewrite description as a fresh unified synthesis incorporating the existing value and any new information from this passage. Never append — always rewrite as one coherent summary.
+- Update significance only if the passage meaningfully changes or clarifies it; otherwise preserve unchanged.
+- Extend known_connections with any new ones found in this passage; never duplicate existing entries. Format each as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)". Normalize any existing entries that don't follow this format.
+- Extend aliases with any new ones found, including newly encountered derived word forms. Never duplicate.
+- Preserve exactly: name, type, first_appearance_quote.
+
+If an entry does not appear in this passage, omit it from the results entirely.
+If no entries appear at all, return an empty array: []
+
+Return ONLY a valid JSON array (no markdown, no code fences) containing only the entries that appeared in the passage:
+[
+  {
+    "name": "...",
+    "type": "place or faction or concept or object or species or unknown",
+    "description": "...",
+    "significance": "...",
+    "known_connections": ["Name (relationship) — one entry per named entity"],
+    "aliases": ["..."],
+    "first_appearance_quote": "..."
+  }
+]
+
+Existing entries to check:
+{{entries}}
+
+Passage:
+---
+{{text}}
+---
+]]
+
+-- Create a new codex entry from a highlighted term.
+-- Returns: entry table or nil, err, usage
+function GeminiClient:createCodexEntry(page_text, name, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set. Please configure it in the plugin settings."
+    end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_CREATE_PROMPT
+    local prompt = sub(tmpl, "{{name}}", name)
+    prompt       = sub(prompt, "{{text}}", page_text)
+
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.2, maxOutputTokens = 4096 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url    = API_BASE .. "?key=" .. self.api_key,
+        method = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse Gemini response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then
+        local reason = parsed.candidates and parsed.candidates[1]
+            and parsed.candidates[1].finishReason or "unknown"
+        return nil, "Gemini returned no text. Finish reason: " .. reason
+    end
+
+    text = stripCodeFences(text)
+    local entry, _, jerr = json.decode(text)
+    if not entry then
+        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
+    end
+    if type(entry) ~= "table" or type(entry.name) ~= "string" then
+        return nil, "Expected a JSON object with a name field"
+    end
+    return entry, nil, extractUsage(parsed)
+end
+
+-- Enrich a batch of existing codex entries against a page passage.
+-- Returns: array of updated entries (only those found in the passage), nil, usage
+-- or nil, err
+function GeminiClient:enrichCodexEntries(page_text, entries, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set. Please configure it in the plugin settings."
+    end
+    if not entries or #entries == 0 then return {}, nil end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT
+    local prompt = sub(tmpl, "{{entries}}", json.encode(entries))
+    prompt       = sub(prompt, "{{text}}", page_text)
+
+    local request_body = json.encode({
+        contents = {{ parts = {{ text = prompt }} }},
+        generationConfig = { temperature = 0.2, maxOutputTokens = 8192 },
+    })
+
+    local response_body = {}
+    local ok, status = https.request({
+        url    = API_BASE .. "?key=" .. self.api_key,
+        method = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+
+    if not ok then return nil, "Network error: " .. tostring(status) end
+
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse Gemini response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then
+        local reason = parsed.candidates and parsed.candidates[1]
+            and parsed.candidates[1].finishReason or "unknown"
+        return nil, "Gemini returned no text. Finish reason: " .. reason
+    end
+
+    text = stripCodeFences(text)
+    local result, _, jerr = json.decode(text)
+    if not result then
+        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
+    end
+    if type(result) ~= "table" then
+        return nil, "Expected a JSON array, got: " .. type(result)
+    end
+    return result, nil, extractUsage(parsed)
+end
+
 -- Fetch model metadata from the Gemini models endpoint
 function GeminiClient:fetchModelInfo()
     local url = API_MODELS_BASE .. MODEL .. "?key=" .. self.api_key
