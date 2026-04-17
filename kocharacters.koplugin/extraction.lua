@@ -529,10 +529,10 @@ function Extraction:_processCharacterJob(job, book_id)
 
         if not characters or #characters == 0 then
             self_ref:showExtractedCount(0)
-            -- Still run codex enrichment even when no characters found
-            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text)
-            self_ref:_checkAndPromptPendingPages(book_ref)
-            self_ref:_processNextInQueue()
+            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
+                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_processNextInQueue()
+            end)
             return
         end
 
@@ -542,9 +542,10 @@ function Extraction:_processCharacterJob(job, book_id)
             end
             self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found")
             self_ref:showExtractedCount(#characters)
-            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text)
-            self_ref:_checkAndPromptPendingPages(book_ref)
-            self_ref:_processNextInQueue()
+            self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
+                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_processNextInQueue()
+            end)
         end, page_ref, true)
     end
 
@@ -559,45 +560,103 @@ function Extraction:_processCodexJob(job, book_id)
         self:_processNextInQueue()
         return
     end
-    self:_runCodexEnrichment(book_id, pageno, page_text)
-    self:_processNextInQueue()
+    self:_runCodexEnrichment(book_id, pageno, page_text, function()
+        self:_processNextInQueue()
+    end)
 end
 
--- Synchronous codex enrichment — called after character job completes or as a standalone job.
-function Extraction:_runCodexEnrichment(book_id, pageno, page_text)
-    if self._codex_scanned[pageno] then return end
-
-    local entries = self.db_codex:getEntriesForPage(book_id, page_text)
-    if #entries == 0 then return end
-
-    local api_key = self._get_api_key()
-    local client  = GeminiClient:new(api_key)
-    local updated, api_err, usage
-    local ok, call_err = pcall(function()
-        updated, api_err, usage = client:enrichCodexEntries(page_text, entries)
-    end)
-
-    if ok and not api_err and usage then self._record_usage(usage) end
-
-    if not ok or api_err then
-        local err_str = tostring(call_err or api_err)
-        local is_retryable = err_str:find("Network error") or err_str:find("503")
-            or err_str:find("429") or err_str:find("quota") or err_str:find("overload")
-        if is_retryable then
-            self:showExtractError()
-            self._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry")
-        else
-            self._codex_scanned[pageno] = true
-        end
+-- Async codex enrichment — spawns a subprocess and polls, then calls on_done when finished.
+function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
+    if self._codex_scanned[pageno] then
+        if on_done then on_done() end
         return
     end
 
-    self._codex_scanned[pageno] = true
-    if updated and #updated > 0 then
-        self.db_codex:merge(book_id, updated, pageno)
-        self:showCodexExtractedCount(#updated)
-        self._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
+    local entries = self.db_codex:getEntriesForPage(book_id, page_text)
+    if #entries == 0 then
+        if on_done then on_done() end
+        return
     end
+
+    local api_key     = self._get_api_key()
+    local client      = GeminiClient:new(api_key)
+    local DataStorage = require("datastorage")
+    local tmp_dir     = DataStorage:getDataDir() .. "/kocharacters"
+    local req_file    = tmp_dir .. "/.codex_req_"  .. tostring(pageno) .. ".json"
+    local resp_file   = tmp_dir .. "/.codex_resp_" .. tostring(pageno) .. ".json"
+    os.remove(resp_file)
+
+    local ok, build_err = client:buildCodexRequestFile(req_file, page_text, entries)
+    if not ok then
+        logger.warn("KoCharacters: codex buildRequestFile failed: " .. tostring(build_err))
+        self._codex_scanned[pageno] = true
+        if on_done then on_done() end
+        return
+    end
+
+    local url        = client:asyncExtractUrl()
+    local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
+    local helper     = plugin_dir .. "async_request.lua"
+    local lua_cmd    = string.format(
+        'cd /mnt/us/koreader && ./luajit "%s" "%s" "%s" "%s" >/dev/null 2>&1 &',
+        helper, req_file, url, resp_file)
+    logger.info("KoCharacters: codex async launch page=" .. tostring(pageno))
+    os.execute(lua_cmd)
+
+    local poll_start   = os.time()
+    local poll_timeout = 35
+    local self_ref     = self
+
+    local function poll()
+        if os.time() - poll_start > poll_timeout then
+            logger.warn("KoCharacters: codex poll timeout page=" .. tostring(pageno))
+            os.remove(req_file)
+            os.remove(resp_file)
+            if on_done then on_done() end
+            return
+        end
+
+        local f = io.open(resp_file, "r")
+        if not f then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+        local size = f:seek("end")
+        f:close()
+        if not size or size == 0 then
+            UIManager:scheduleIn(1.5, poll)
+            return
+        end
+
+        os.remove(req_file)
+        local updated, api_err, usage = client:parseCodexResponseFile(resp_file)
+        os.remove(resp_file)
+
+        if api_err then
+            local is_retryable = type(api_err) == "string"
+                and (api_err:find("Network error") or api_err:find("503")
+                     or api_err:find("429") or api_err:find("quota") or api_err:find("overload"))
+            if is_retryable then
+                self_ref:showExtractError()
+                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry")
+            else
+                self_ref._codex_scanned[pageno] = true
+            end
+            if on_done then on_done() end
+            return
+        end
+
+        if usage then self_ref._record_usage(usage) end
+        self_ref._codex_scanned[pageno] = true
+        if updated and #updated > 0 then
+            self_ref.db_codex:merge(book_id, updated, pageno)
+            self_ref:showCodexExtractedCount(#updated)
+            self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
+        end
+        if on_done then on_done() end
+    end
+
+    UIManager:scheduleIn(1.5, poll)
 end
 
 function Extraction:clearCodexScanned()

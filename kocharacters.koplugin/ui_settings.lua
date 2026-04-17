@@ -381,8 +381,8 @@ function UISettings.open(plugin)
             },
             {
                 text_func = function()
-                    return "Character detail view: "
-                        .. (G_reader_settings:readSetting("kocharacters_html_viewer") and "HTML (with portrait)" or "Text")
+                    return "Detail view: "
+                        .. (G_reader_settings:readSetting("kocharacters_html_viewer") and "HTML" or "Text")
                 end,
                 callback = function()
                     local on = G_reader_settings:readSetting("kocharacters_html_viewer")
@@ -390,7 +390,7 @@ function UISettings.open(plugin)
                     UIManager:close(settings_menu)
                     UISettings.open(plugin)
                 end,
-                help     = "Text mode shows plain character info in a scrollable text viewer.\nHTML mode renders a richer layout and displays the AI-generated portrait image (if one has been created for that character).",
+                help     = "Text mode shows plain info in a scrollable text viewer.\nHTML mode renders a richer layout and displays AI-generated portrait images.",
             },
             {
                 text     = "View API usage",

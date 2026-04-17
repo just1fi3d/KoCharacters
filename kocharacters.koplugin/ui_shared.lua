@@ -40,6 +40,7 @@ function UIShared.showHtmlViewer(opts)
             Device.screen:refreshFull(0, 0, Device.screen:getWidth(), Device.screen:getHeight())
         end)
     end
+    if opts.close_ref then opts.close_ref.close = close_fn end
 
     local rows   = opts.make_buttons(close_fn)
     local btable = ButtonTable:new{ width = inner_w, buttons = rows }
