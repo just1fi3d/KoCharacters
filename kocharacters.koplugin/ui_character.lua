@@ -138,7 +138,7 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
         local client = GeminiClient:new(plugin:getApiKey())
         local cleaned, err, usage1
         local ok, call_err = pcall(function()
-            cleaned, err, usage1 = client:cleanCharacters(enriched_chars)
+            cleaned, err, usage1 = client:cleanCharacters(enriched_chars, plugin:getCharactersCleanupPrompt())
         end)
         UIManager:close(working_msg)
         if ok and not err then plugin:recordUsage(usage1) end
@@ -452,6 +452,51 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 end,
             })
         end
+        -- Find codex entries that reference this character by name or alias
+        local char_names = { [char.name] = true }
+        for _, a in ipairs(char.aliases or {}) do
+            if a and a ~= "" then char_names[a] = true end
+        end
+        local all_codex = plugin.db_codex:load(book_id)
+        local related_codex = {}
+        for _, entry in ipairs(all_codex) do
+            for _, conn in ipairs(entry.known_connections or {}) do
+                for n in pairs(char_names) do
+                    if conn:find(n, 1, true) then
+                        table.insert(related_codex, entry)
+                        break
+                    end
+                end
+            end
+        end
+
+        local function do_codex()
+            close_fn()
+            if #related_codex == 0 then
+                plugin:showMsg("No codex entries reference " .. char.name .. ".", 3)
+                return
+            end
+            local UICodex = require("ui_codex")
+            local items = {}
+            for _, entry in ipairs(related_codex) do
+                local label = "[" .. (entry.type or "?") .. "] " .. (entry.name or "?")
+                table.insert(items, {
+                    text     = label,
+                    callback = function()
+                        UICodex.showEntryViewer(plugin, book_id, entry)
+                    end,
+                })
+            end
+            local m = Menu:new{
+                title        = "Codex: " .. char.name,
+                item_table   = items,
+                width        = math.floor(Screen:getWidth() * 0.85),
+                height       = math.floor(Screen:getHeight() * 0.7),
+                onMenuSelect = function(_, item) item.callback() end,
+            }
+            UIManager:show(m)
+        end
+
         return {
             {
                 { text = "Clean up",   callback = function() close_fn(); UICharacter.onCleanCharacter(plugin, book_id, char.name) end },
@@ -469,6 +514,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                     Portrait.onGenerate(plugin, book_id, char)
                     UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
                 end },
+                { text = "Codex (" .. #related_codex .. ")", enabled = #related_codex > 0, callback = do_codex },
                 { text = "Merge into...", callback = do_merge },
                 { text = "Delete",        callback = do_delete },
             },
@@ -789,7 +835,7 @@ function UICharacter.onCleanupAllCharacters(plugin)
 
             local cleaned, err, usage
             local ok, call_err = pcall(function()
-                cleaned, err, usage = client:cleanCharacters(batch)
+                cleaned, err, usage = client:cleanCharacters(batch, plugin:getCharactersCleanupPrompt())
             end)
             UIManager:close(working_msg)
             if ok and not err then plugin:recordUsage(usage) end

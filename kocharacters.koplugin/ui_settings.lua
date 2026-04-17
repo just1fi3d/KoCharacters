@@ -175,7 +175,14 @@ function UISettings.open(plugin)
                     callback = function() UISettings.editPrompt(plugin,
                         "Cleanup Prompt", "kocharacters_cleanup_prompt",
                         GeminiClient.DEFAULT_CLEANUP_PROMPT) end,
-                    help     = "The prompt used during 'Clean up all characters'. Controls how Gemini merges near-duplicate entries, normalises phrasing, and polishes character text fields across the whole book.",
+                    help     = "The prompt used when cleaning up a single character. Controls how Gemini merges near-duplicate entries, normalises phrasing, and polishes character text fields.",
+                },
+                {
+                    text     = "Edit batch cleanup prompt",
+                    callback = function() UISettings.editPrompt(plugin,
+                        "Batch Cleanup Prompt", "kocharacters_characters_cleanup_prompt",
+                        GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT) end,
+                    help     = "The prompt used during 'Cleanup all characters'. Same rules as the single-character cleanup but processes multiple characters in one API call.",
                 },
                 {
                     text     = "Edit re-analyze prompt",

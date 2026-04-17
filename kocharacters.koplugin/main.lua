@@ -398,6 +398,11 @@ function KoCharacters:getExtractionPrompt()
         or GeminiClient.DEFAULT_EXTRACTION_PROMPT
 end
 
+function KoCharacters:getCharactersCleanupPrompt()
+    return G_reader_settings:readSetting("kocharacters_characters_cleanup_prompt")
+        or GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT
+end
+
 function KoCharacters:getCleanupPrompt()
     return G_reader_settings:readSetting("kocharacters_cleanup_prompt")
         or GeminiClient.DEFAULT_CLEANUP_PROMPT

@@ -63,6 +63,57 @@ Rules:
 - For role: default to "supporting" rather than "unknown" unless there is a clear reason the character cannot be classified.
 - For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Luc" is confirmed to be "Luc Holdfast"), use the full name and put the short name in aliases.
 
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Input passage:
+The warden led Helena down a narrow infirmary corridor. A pale young woman in an orderly's apron looked up — her face disfigured by long deliberate scars running the length of each cheek. "Marino?" Her name was whispered so softly, it could have been a breeze. Helena recognised her: Grace, from the Resistance. She had done this to herself, Helena realised. Made herself ugly so they would not keep her.
+
+Existing: [{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter","Vivimancer"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant, she maintains defiant internal resolve despite profound trauma.","motivation":"Wants to survive her imprisonment and find a way to resist her captors.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}]
+
+Skip: none
+
+Correct output:
+{
+  "book_context": "Dark fantasy. An occupied city under a necromantic authoritarian regime.",
+  "characters": [
+    {
+      "name": "Helena Marino",
+      "aliases": [],
+      "identity_tags": ["Prisoner","Resistance fighter","Vivimancer"],
+      "occupation": "",
+      "first_appearance_quote": "Helena wondered sometimes if she still had eyes.",
+      "physical_description": "Frail and emaciated with matted black hair.",
+      "personality": "Disciplined and observant, she maintains defiant internal resolve despite profound trauma.",
+      "motivation": "Wants to survive her imprisonment and find a way to resist her captors.",
+      "defining_moments": ["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],
+      "role": "protagonist",
+      "relationships": ["Kaine Ferron (captor)", "Grace (former Resistance comrade)"]
+    },
+    {
+      "name": "Grace",
+      "aliases": [],
+      "identity_tags": ["Resistance survivor", "Forced laborer"],
+      "occupation": "Hospital orderly",
+      "first_appearance_quote": "\"Marino?\" Her name was whispered so softly, it could have been a breeze.",
+      "physical_description": "Pale with a youthful face disfigured by long, deliberate scars running the length of each cheek.",
+      "personality": "Deeply traumatized and fearful, she exhibits a fierce survivalist pragmatism — willing to cause herself permanent harm to evade exploitation by the regime.",
+      "motivation": "Wants to survive the regime's occupation while protecting herself from exploitation.",
+      "defining_moments": ["She intentionally scarred her own face to avoid being kept by the Undying."],
+      "role": "supporting",
+      "relationships": ["Helena Marino (former Resistance comrade)"]
+    }
+  ]
+}
+
+Key points shown above:
+- Grace's "Hospital orderly" is occupation; "Resistance survivor" and "Forced laborer" are identity_tags (social status under the regime) — never duplicate occupation in identity_tags.
+- Grace's personality is a trait summary ("fearful", "survivalist pragmatism") — not events ("she scarred herself").
+- Grace's defining_moment is a One-Way Door permanent change, one sentence, past tense.
+- Helena is returned only because she appears in the passage; her profile is updated minimally (new relationship added, nothing else changed).
+- Relationships use the full name from the existing profiles: "Helena Marino", not "Helena".
+---
+
 Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
 {
   "book_context": "2-3 sentences describing the genre, country/region, and historical period or era of the story. Current known context: {{book_context}} — update and expand this if the passage adds new information, otherwise return it unchanged. Leave empty string only if nothing is known.",
@@ -177,6 +228,21 @@ Return ONLY a valid JSON object (no markdown, no code fences) with exactly these
   "relationships": ["..."],
   "role": "..."
 }
+
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Input:
+{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
+
+Correct output:
+{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
+
+Key points shown above:
+- Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
+- Case-duplicate identity_tags ("Regime official" and "Regime Official") are collapsed into one canonical form.
+- Personality: two overlapping semicolon-joined paragraphs merged into one coherent description with no repeated ideas.
+---
 
 Character profile to clean:
 {{character}}
@@ -529,14 +595,7 @@ function GeminiClient:reanalyzeCharacter(page_text, char, reanalyze_prompt)
     return characters, nil, extractUsage(parsed)
 end
 
--- Clean up multiple character profiles in one call
-function GeminiClient:cleanCharacters(characters)
-    if not self.api_key or self.api_key == "" then
-        return nil, "API key is not set."
-    end
-    if not characters or #characters == 0 then return {}, nil end
-
-    local prompt = string.format([[
+GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT = [[
 You are cleaning up character profiles from a book. Some text fields contain repeated or redundant information because they were built up incrementally (e.g. "brave; brave" or "tall, dark hair; tall with dark hair").
 
 For each character, clean up the text fields:
@@ -554,9 +613,35 @@ For each character, clean up the text fields:
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
 [{ "name": "...", "aliases": ["..."], "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
 
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Input:
+[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
+
+Correct output:
+[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
+
+Key points shown above:
+- Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
+- Case-duplicate identity_tags ("Regime official" and "Regime Official") are collapsed into one canonical form.
+- Personality: two overlapping semicolon-joined paragraphs merged into one coherent description with no repeated ideas.
+- Output is a JSON array with exactly the same number of elements as the input, in the same order.
+---
+
 Character profiles to clean:
-%s
-]], json.encode(characters))
+{{characters}}
+]]
+
+-- Clean up multiple character profiles in one call
+function GeminiClient:cleanCharacters(characters, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not characters or #characters == 0 then return {}, nil end
+
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT
+    local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
 
     local request_body = json.encode({
         contents = {{ parts = {{ text = prompt }} }},

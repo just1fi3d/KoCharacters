@@ -483,6 +483,8 @@ function Extraction:_processCharacterJob(job, book_id)
             os.remove(req_file)
             os.remove(resp_file)
             self_ref.db:markPagePending(book_ref, page_ref)
+            self_ref:showExtractError()
+            self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": timed out — will retry")
             self_ref:_processNextInQueue()
             return
         end
@@ -617,6 +619,8 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
             logger.warn("KoCharacters: codex poll timeout page=" .. tostring(pageno))
             os.remove(req_file)
             os.remove(resp_file)
+            self_ref:showExtractError()
+            self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": timed out — will retry")
             if on_done then on_done() end
             return
         end
