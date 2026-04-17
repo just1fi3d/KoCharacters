@@ -49,6 +49,7 @@ Rules:
 - For existing characters: only return them if they actually appear in this passage.
 - For new characters: only include if there is enough information to build a meaningful profile.
 - If there is nothing to report, return an empty JSON array: []
+- Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
 - For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
@@ -58,7 +59,9 @@ Rules:
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
     Exclude: combat without consequence, travel, standard dialogue, temporary moods.
   Each entry must be one sentence in past tense. Append new entries; never duplicate existing ones.
-- For relationships: format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
+- For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
+- For role: default to "supporting" rather than "unknown" unless there is a clear reason the character cannot be classified.
+- For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Luc" is confirmed to be "Luc Holdfast"), use the full name and put the short name in aliases.
 
 Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
 {
@@ -135,9 +138,9 @@ GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT = [[
 You are cleaning up world-building entries from a book. Some text fields may contain repeated or redundant information built up incrementally.
 
 For each entry, clean up these fields:
-- description: remove repetitions, combine fragmented observations into one fluent paragraph
-- significance: same — one coherent statement
-- known_connections: normalize to "Name (relationship)" format, deduplicate
+- description: remove repetitions, combine fragmented observations into one fluent paragraph. If it has grown into an exhaustive list of observed instances or uses, synthesize into a general characterization of what the thing is and how it works.
+- significance: same — one coherent statement of narrative role. Must be distinct from description (not a restatement of what the thing does).
+- known_connections: normalize to "Name (relationship)" format, deduplicate. Replace any role descriptors (e.g. "protagonist", "subject") with the character's actual name if it can be inferred from context.
 - aliases: deduplicate, remove entries that are just alternate casings of the name
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of entries in the same order. Each element must have exactly these keys:
@@ -158,7 +161,8 @@ Clean up each text field:
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
-- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing.
+- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
+- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
@@ -540,10 +544,11 @@ For each character, clean up the text fields:
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
-- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing.
+- For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
+- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
-[{ "name": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
+[{ "name": "...", "aliases": ["..."], "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
 
 Character profiles to clean:
 %s
@@ -845,9 +850,10 @@ Your tasks:
 2. Populate a codex entry based on the passage.
 
 Rules:
-- description: synthesised summary of what this thing is. Write as a concise unified description, not a scene summary.
-- significance: why it matters to the story. Leave empty string if this passage doesn't establish it clearly.
-- known_connections: named characters, places, factions, or other entities associated with this term in the passage. Format each entry as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)", "Lord Vance (founder)". One entry per named entity. Empty array if none found.
+- name: capitalize as a proper noun or world-specific term (e.g. "Resonance", "Transference", "The Iron Guild"). Use title case for multi-word names.
+- description: what this thing is and how it works — a concise unified characterization. Do not enumerate every observed instance or use. Write as a general reference entry, not a scene summary.
+- significance: its narrative role — why it matters to the story, what it changes for characters or the world. This is distinct from description. Leave empty string if not clearly established.
+- known_connections: use actual character names from context, never role descriptors like "protagonist", "subject", or "narrator". Format each entry as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)", "Lord Vance (founder)". One entry per named entity. Empty array if none found.
 - aliases: alternate names, abbreviations, and derived word forms found in the passage. Include practitioner titles, adjective forms, and plural forms (e.g. for "Vivimancy": "vivimancer", "vivimancers", "vivimantic"). Empty array if none found.
 - first_appearance_quote: a short verbatim quote from the passage where this term first appears.
 - If the passage doesn't contain enough information to meaningfully describe this term, return just the type and a one-sentence description. Do not fabricate details.
@@ -875,9 +881,9 @@ You are updating codex entries for a novel based on a new passage.
 The entries below are world-building elements already tracked by the reader.
 
 For each entry that appears in this passage:
-- Rewrite description as a fresh unified synthesis incorporating the existing value and any new information from this passage. Never append — always rewrite as one coherent summary.
-- Update significance only if the passage meaningfully changes or clarifies it; otherwise preserve unchanged.
-- Extend known_connections with any new ones found in this passage; never duplicate existing entries. Format each as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)". Normalize any existing entries that don't follow this format.
+- Rewrite description as a fresh unified synthesis incorporating the existing value and any new information from this passage. Never append — always rewrite as one coherent general characterization. Do not enumerate every observed instance or use; synthesize into a general description of what the thing is and how it works.
+- Update significance only if the passage meaningfully changes or clarifies its narrative role; otherwise preserve unchanged.
+- Extend known_connections with any new ones found in this passage; never duplicate existing entries. Use actual character names from context, never role descriptors like "protagonist" or "subject". Format each as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)". Normalize any existing entries that don't follow this format.
 - Extend aliases with any new ones found, including newly encountered derived word forms. Never duplicate.
 - Preserve exactly: name, type, first_appearance_quote.
 

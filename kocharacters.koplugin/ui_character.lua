@@ -154,11 +154,22 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
                     UIManager:show(apply_msg)
                     UIManager:forceRePaint()
                     for _, orig in ipairs(all_chars) do
-                        if orig.name == cc.name then
-                            if cc.physical_description ~= nil then orig.physical_description = cc.physical_description end
-                            if cc.personality          ~= nil then orig.personality          = cc.personality          end
-                            if cc.role and cc.role ~= ""      then orig.role                 = cc.role                 end
-                            if type(cc.relationships) == "table" then orig.relationships     = cc.relationships        end
+                        local match = orig.name == cc.name
+                        if not match then
+                            for _, alias in ipairs(orig.aliases or {}) do
+                                if alias == cc.name then match = true; break end
+                            end
+                        end
+                        if match then
+                            if cc.name ~= orig.name                  then orig.name              = cc.name              end
+                            if type(cc.aliases) == "table"           then orig.aliases            = cc.aliases           end
+                            if cc.physical_description ~= nil        then orig.physical_description = cc.physical_description end
+                            if cc.personality          ~= nil        then orig.personality        = cc.personality        end
+                            if cc.motivation           ~= nil        then orig.motivation         = cc.motivation         end
+                            if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
+                            if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
+                            if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
+                            if type(cc.defining_moments) == "table"  then orig.defining_moments   = cc.defining_moments   end
                             orig.needs_cleanup = nil
                             changed = true
                             break
@@ -802,11 +813,23 @@ function UICharacter.onCleanupAllCharacters(plugin)
                         UIManager:show(apply_msg)
                         UIManager:forceRePaint()
                         for _, orig in ipairs(all_chars) do
-                            if orig.name == cc.name then
-                                if cc.physical_description ~= nil    then orig.physical_description = cc.physical_description end
-                                if cc.personality          ~= nil    then orig.personality          = cc.personality          end
-                                if cc.role and cc.role ~= ""         then orig.role                 = cc.role                 end
-                                if type(cc.relationships) == "table" then orig.relationships        = cc.relationships        end
+                            -- Match by name, or by alias (handles name promotion cases)
+                            local match = orig.name == cc.name
+                            if not match then
+                                for _, alias in ipairs(orig.aliases or {}) do
+                                    if alias == cc.name then match = true; break end
+                                end
+                            end
+                            if match then
+                                if cc.name ~= orig.name                  then orig.name              = cc.name              end
+                                if type(cc.aliases) == "table"           then orig.aliases            = cc.aliases           end
+                                if cc.physical_description ~= nil        then orig.physical_description = cc.physical_description end
+                                if cc.personality          ~= nil        then orig.personality        = cc.personality        end
+                                if cc.motivation           ~= nil        then orig.motivation         = cc.motivation         end
+                                if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
+                                if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
+                                if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
+                                if type(cc.defining_moments) == "table"  then orig.defining_moments   = cc.defining_moments   end
                                 orig.needs_cleanup = nil
                                 changed = true; break
                             end
