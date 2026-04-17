@@ -580,6 +580,8 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
         return
     end
 
+    self:showScanIndicator()
+
     local api_key     = self._get_api_key()
     local client      = GeminiClient:new(api_key)
     local DataStorage = require("datastorage")

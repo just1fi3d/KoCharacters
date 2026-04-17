@@ -215,8 +215,10 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
                     callback = function()
                         close_fn()
                         Portrait.onGenerateCodex(plugin, book_id, entry)
-                        local fresh = plugin.db_codex:findByName(book_id, name)
-                        UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
+                        UIManager:scheduleIn(0.15, function()
+                            local fresh = plugin.db_codex:findByName(book_id, name)
+                            UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
+                        end)
                     end,
                 },
                 {
@@ -444,7 +446,8 @@ end
 -- Codex browser
 -- ---------------------------------------------------------------------------
 
-local TYPE_FILTER_CYCLE = { "all", "place", "faction", "concept", "object", "species" }
+local TYPE_FILTER_CYCLE  = { "all", "place", "faction", "concept", "object", "species" }
+local TYPE_FILTER_LABELS = { all = "All types", place = "Places", faction = "Factions", concept = "Concepts", object = "Objects", species = "Species" }
 
 function UICodex.showBrowser(plugin, type_filter)
     type_filter = type_filter or "all"
@@ -507,9 +510,7 @@ function UICodex.showBrowser(plugin, type_filter)
             break
         end
     end
-    local filter_label = type_filter == "all"
-        and "[ Filter: All types ]"
-        or  "[ Filter: " .. type_filter:sub(1,1):upper() .. type_filter:sub(2) .. "s ]"
+    local filter_label = "[ Filter: " .. (TYPE_FILTER_LABELS[type_filter] or type_filter) .. " ]"
 
     local items = {}
     table.insert(items, {
