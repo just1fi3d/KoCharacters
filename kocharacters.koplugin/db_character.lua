@@ -348,17 +348,58 @@ function CharacterDB:scannedPath(book_md5)
     return self:bookDir(book_md5) .. "/scanned.json"
 end
 
--- Returns a set (table keyed by page number) of already-scanned pages
-function CharacterDB:loadScannedPages(book_md5)
+-- Internal: load raw scanned data.
+-- New format: { page_count = N, pages = [...] }
+-- Old format (plain array): migrated transparently on next write.
+-- Returns: set (keyed by page num), stored_page_count (or nil)
+function CharacterDB:_loadScannedData(book_md5)
     local path = self:scannedPath(book_md5)
     local f = io.open(path, "r")
-    if not f then return {} end
+    if not f then return {}, nil end
     local content = f:read("*a")
     f:close()
-    local list = json.decode(content) or {}
-    local set = {}
-    for _, p in ipairs(list) do set[p] = true end
+    local data = json.decode(content) or {}
+    if data.pages then
+        local set = {}
+        for _, p in ipairs(data.pages) do set[p] = true end
+        return set, data.page_count
+    else
+        local set = {}
+        for _, p in ipairs(data) do set[p] = true end
+        return set, nil
+    end
+end
+
+-- Internal: persist scanned set + page_count
+function CharacterDB:_saveScannedData(book_md5, set, page_count)
+    local list = {}
+    for p in pairs(set) do table.insert(list, p) end
+    local path = self:scannedPath(book_md5)
+    local f = io.open(path, "w")
+    if f then
+        f:write(json.encode({ page_count = page_count, pages = list }))
+        f:close()
+    else
+        logger.warn("KoCharacters: could not write scanned pages to " .. path)
+    end
+end
+
+-- Returns a set (table keyed by page number) of already-scanned pages
+function CharacterDB:loadScannedPages(book_md5)
+    local set, _ = self:_loadScannedData(book_md5)
     return set
+end
+
+-- Returns the page count stored alongside the scanned list, or nil if not yet recorded
+function CharacterDB:getScannedPageCount(book_md5)
+    local _, count = self:_loadScannedData(book_md5)
+    return count
+end
+
+-- Persist the current document page count alongside the scanned list
+function CharacterDB:saveScannedPageCount(book_md5, page_count)
+    local set, _ = self:_loadScannedData(book_md5)
+    self:_saveScannedData(book_md5, set, page_count)
 end
 
 function CharacterDB:isPageScanned(book_md5, page_num)
@@ -366,27 +407,17 @@ function CharacterDB:isPageScanned(book_md5, page_num)
 end
 
 function CharacterDB:markPageScanned(book_md5, page_num)
-    local set = self:loadScannedPages(book_md5)
+    local set, count = self:_loadScannedData(book_md5)
     if set[page_num] then return end
     set[page_num] = true
-    local list = {}
-    for p in pairs(set) do table.insert(list, p) end
-    local path = self:scannedPath(book_md5)
-    local f = io.open(path, "w")
-    if f then f:write(json.encode(list)); f:close()
-    else logger.warn("KoCharacters: could not write scanned pages to " .. path) end
+    self:_saveScannedData(book_md5, set, count)
 end
 
 -- Mark a range of pages as scanned in one file write
 function CharacterDB:markPagesScanned(book_md5, from_page, to_page)
-    local set = self:loadScannedPages(book_md5)
+    local set, count = self:_loadScannedData(book_md5)
     for p = from_page, to_page do set[p] = true end
-    local list = {}
-    for p in pairs(set) do table.insert(list, p) end
-    local path = self:scannedPath(book_md5)
-    local f = io.open(path, "w")
-    if f then f:write(json.encode(list)); f:close()
-    else logger.warn("KoCharacters: could not write scanned pages to " .. path) end
+    self:_saveScannedData(book_md5, set, count)
 end
 
 function CharacterDB:clearScannedPages(book_md5)

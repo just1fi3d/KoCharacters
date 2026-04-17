@@ -51,6 +51,8 @@ function Extraction.new(deps)
     self._curl_req_file    = nil
     self._curl_resp_file   = nil
     self._pending_notified = false
+    -- Page-count cache for scanned-history invalidation
+    self._cached_page_count     = nil
     -- Indicator widget state
     self._scan_indicator        = nil
     self._count_indicator       = nil
@@ -186,6 +188,32 @@ function Extraction:showExtractError()
 end
 
 -- ---------------------------------------------------------------------------
+-- Scanned-history invalidation
+-- ---------------------------------------------------------------------------
+
+-- Checks whether the document's page count has changed since it was last recorded
+-- (e.g. font size / margin adjustment causes re-render with different pagination).
+-- If so, wipes the stale scanned list so auto-extract resumes on all pages.
+-- Caches the last-seen count so the file system is only touched when the count changes.
+function Extraction:_checkAndInvalidateScannedPages(book_id)
+    local total_pages
+    pcall(function() total_pages = self.ui.document:getPageCount() end)
+    if not total_pages then return end
+
+    if self._cached_page_count == total_pages then return end
+    self._cached_page_count = total_pages
+
+    local stored_count = self.db:getScannedPageCount(book_id)
+    if stored_count ~= nil and stored_count ~= total_pages then
+        self.db:clearScannedPages(book_id)
+        logger.info(string.format(
+            "KoCharacters: page count changed (%d → %d), cleared scan history",
+            stored_count, total_pages))
+    end
+    self.db:saveScannedPageCount(book_id, total_pages)
+end
+
+-- ---------------------------------------------------------------------------
 -- Page turn debounce
 -- ---------------------------------------------------------------------------
 
@@ -201,6 +229,9 @@ function Extraction:onPageChanged(pageno)
 
     local book_id = self._get_book_id()
     if not book_id then return end
+
+    self:_checkAndInvalidateScannedPages(book_id)
+
     if self.db:isPageScanned(book_id, pageno) then return end
 
     -- Re-render the indicator so it survives the e-ink page-turn refresh
@@ -224,6 +255,8 @@ end
 function Extraction:onReaderReady()
     local book_id = self._get_book_id()
     if not book_id then return end
+
+    self:_checkAndInvalidateScannedPages(book_id)
 
     -- Only prompt once per book per session
     local greeted = G_reader_settings:readSetting("kocharacters_greeted_books") or {}
