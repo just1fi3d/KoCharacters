@@ -345,7 +345,7 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w, opts)
     if char.identity_tags and #char.identity_tags > 0 then
         local items = {}
         for _, t in ipairs(char.identity_tags) do
-            items[#items+1] = '<li>' .. esc(t) .. '</li>'
+            items[#items+1] = '<li>' .. linkify(t) .. '</li>'
         end
         p[#p+1] = '<div class="section"><div class="label">Identity</div><ul>'
             .. table.concat(items) .. '</ul></div>'

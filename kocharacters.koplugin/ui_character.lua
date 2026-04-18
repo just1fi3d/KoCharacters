@@ -416,10 +416,13 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
     local all_codex = plugin.db_codex:load(book_id)
     local related_codex = {}
     for _, entry in ipairs(all_codex) do
+        local matched = false
         for _, conn in ipairs(entry.known_connections or {}) do
+            if matched then break end
             for n in pairs(char_names) do
                 if conn:find(n, 1, true) then
                     table.insert(related_codex, entry)
+                    matched = true
                     break
                 end
             end
