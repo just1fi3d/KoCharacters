@@ -201,10 +201,77 @@ function UtilsCharacter.formatText(c)
     return table.concat(lines, "\n")
 end
 
+-- Linkifies plain text: wraps known entity names in <a href> tags.
+-- specs: array of {name, scheme, target}, sorted longest-first by caller.
+-- esc_fn: HTML escaper applied to both href targets and display text.
+local function linkifyText(text, specs, esc_fn)
+    if not text or text == "" or not specs or #specs == 0 then
+        return esc_fn(text or "")
+    end
+    local segments = {{ text = text, linked = false }}
+    for _, spec in ipairs(specs) do
+        if #spec.name >= 3 then
+            local name_lower = spec.name:lower()
+            local new_segs = {}
+            for _, seg in ipairs(segments) do
+                if seg.linked then
+                    new_segs[#new_segs+1] = seg
+                else
+                    local s       = seg.text
+                    local s_lower = s:lower()
+                    local pos, emit = 1, 1
+                    while true do
+                        local si, ei = s_lower:find(name_lower, pos, true)
+                        if not si then
+                            if emit <= #s then
+                                new_segs[#new_segs+1] = { text = s:sub(emit), linked = false }
+                            end
+                            break
+                        end
+                        local before = si > 1  and s:sub(si-1, si-1) or " "
+                        local after  = ei < #s and s:sub(ei+1, ei+1) or " "
+                        if not before:match("[%a%d_%-]") and not after:match("[%a%d_%-]") then
+                            if si > emit then
+                                new_segs[#new_segs+1] = { text = s:sub(emit, si-1), linked = false }
+                            end
+                            new_segs[#new_segs+1] = {
+                                text   = s:sub(si, ei),
+                                linked = true,
+                                scheme = spec.scheme,
+                                target = spec.target,
+                            }
+                            pos = ei + 1; emit = ei + 1
+                        else
+                            pos = si + 1
+                        end
+                    end
+                end
+            end
+            segments = new_segs
+        end
+    end
+    local parts = {}
+    for _, seg in ipairs(segments) do
+        if seg.linked then
+            parts[#parts+1] = '<a href="' .. seg.scheme .. ':' .. esc_fn(seg.target) .. '">'
+                .. esc_fn(seg.text) .. '</a>'
+        else
+            parts[#parts+1] = esc_fn(seg.text)
+        end
+    end
+    return table.concat(parts)
+end
+
 -- Returns (css_string, html_body_string) for ScrollHtmlWidget display.
 -- portrait_path — absolute path to portrait image, or nil
 -- container_w   — widget container width in pixels
-function UtilsCharacter.formatHTML(char, portrait_path, container_w)
+-- opts.link_specs    — array of {name, scheme, target} sorted longest-first; wraps names in links
+-- opts.codex_entries — array of {name, type} for an inline "Codex" section
+function UtilsCharacter.formatHTML(char, portrait_path, container_w, opts)
+    opts = opts or {}
+    local link_specs    = opts.link_specs    or {}
+    local codex_entries = opts.codex_entries or {}
+
     local function esc(s)
         s = tostring(s or "")
         s = s:gsub("&",  "&amp;")
@@ -212,6 +279,10 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w)
         s = s:gsub(">",  "&gt;")
         s = s:gsub('"',  "&quot;")
         return s
+    end
+
+    local function linkify(text)
+        return linkifyText(text, link_specs, esc)
     end
 
     local css = table.concat({
@@ -281,23 +352,23 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w)
     end
     if char.motivation and char.motivation ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Motivation</div><p>'
-            .. esc(char.motivation) .. '</p></div>'
+            .. linkify(char.motivation) .. '</p></div>'
     end
     if char.defining_moments and #char.defining_moments > 0 then
         local items = {}
         for _, m in ipairs(char.defining_moments) do
-            items[#items+1] = '<li>' .. esc(m) .. '</li>'
+            items[#items+1] = '<li>' .. linkify(m) .. '</li>'
         end
         p[#p+1] = '<div class="section"><div class="label">Defining Moments</div><ul>'
             .. table.concat(items) .. '</ul></div>'
     end
     if char.physical_description and char.physical_description ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Appearance</div><p>'
-            .. esc(char.physical_description) .. '</p></div>'
+            .. linkify(char.physical_description) .. '</p></div>'
     end
     if char.personality and char.personality ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Personality</div><p>'
-            .. esc(char.personality) .. '</p></div>'
+            .. linkify(char.personality) .. '</p></div>'
     end
     if char.relationships and #char.relationships > 0 then
         local items = {}
@@ -311,6 +382,18 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w)
             end
         end
         p[#p+1] = '<div class="section"><div class="label">Relationships</div><ul>'
+            .. table.concat(items) .. '</ul></div>'
+    end
+    if #codex_entries > 0 then
+        local items = {}
+        for _, ce in ipairs(codex_entries) do
+            local label = esc(ce.name or "?")
+            if ce.type and ce.type ~= "" and ce.type ~= "unknown" then
+                label = label .. ' <span style="color:#666;font-size:0.9em;">[' .. esc(ce.type) .. ']</span>'
+            end
+            items[#items+1] = '<li><a href="codex:' .. esc(ce.name or "") .. '">' .. label .. '</a></li>'
+        end
+        p[#p+1] = '<div class="section"><div class="label">Codex</div><ul>'
             .. table.concat(items) .. '</ul></div>'
     end
     if char.first_appearance_quote and char.first_appearance_quote ~= "" then

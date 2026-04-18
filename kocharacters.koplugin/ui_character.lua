@@ -408,6 +408,24 @@ end
 function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
     local name = char.name or "Unknown"
 
+    -- Find codex entries that reference this character by name or alias (used by both HTML and buttons)
+    local char_names = { [char.name] = true }
+    for _, a in ipairs(char.aliases or {}) do
+        if a and a ~= "" then char_names[a] = true end
+    end
+    local all_codex = plugin.db_codex:load(book_id)
+    local related_codex = {}
+    for _, entry in ipairs(all_codex) do
+        for _, conn in ipairs(entry.known_connections or {}) do
+            for n in pairs(char_names) do
+                if conn:find(n, 1, true) then
+                    table.insert(related_codex, entry)
+                    break
+                end
+            end
+        end
+    end
+
     local function make_buttons(close_fn)
         local others_for_merge = {}
         for _, other in ipairs(plugin.db:load(book_id)) do
@@ -452,50 +470,6 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 end,
             })
         end
-        -- Find codex entries that reference this character by name or alias
-        local char_names = { [char.name] = true }
-        for _, a in ipairs(char.aliases or {}) do
-            if a and a ~= "" then char_names[a] = true end
-        end
-        local all_codex = plugin.db_codex:load(book_id)
-        local related_codex = {}
-        for _, entry in ipairs(all_codex) do
-            for _, conn in ipairs(entry.known_connections or {}) do
-                for n in pairs(char_names) do
-                    if conn:find(n, 1, true) then
-                        table.insert(related_codex, entry)
-                        break
-                    end
-                end
-            end
-        end
-
-        local function do_codex()
-            close_fn()
-            if #related_codex == 0 then
-                plugin:showMsg("No codex entries reference " .. char.name .. ".", 3)
-                return
-            end
-            local UICodex = require("ui_codex")
-            local items = {}
-            for _, entry in ipairs(related_codex) do
-                local label = "[" .. (entry.type or "?") .. "] " .. (entry.name or "?")
-                table.insert(items, {
-                    text     = label,
-                    callback = function()
-                        UICodex.showEntryViewer(plugin, book_id, entry)
-                    end,
-                })
-            end
-            local m = Menu:new{
-                title        = "Codex: " .. char.name,
-                item_table   = items,
-                width        = math.floor(Screen:getWidth() * 0.85),
-                height       = math.floor(Screen:getHeight() * 0.7),
-                onMenuSelect = function(_, item) item.callback() end,
-            }
-            UIManager:show(m)
-        end
 
         return {
             {
@@ -514,7 +488,6 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                     Portrait.onGenerate(plugin, book_id, char)
                     UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
                 end },
-                { text = "Codex (" .. #related_codex .. ")", enabled = #related_codex > 0, callback = do_codex },
                 { text = "Merge into...", callback = do_merge },
                 { text = "Delete",        callback = do_delete },
             },
@@ -550,32 +523,90 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
 
         local inner_w = Screen:getWidth() - 8 - 4  -- screen - outer margin - 2*border
 
-        local html_css, html_body = UtilsCharacter.formatHTML(char, portrait_filename, inner_w)
-
-        local function charLinkCallback(link)
-            local link_url  = type(link) == "table" and (link.uri or "") or tostring(link)
-            if link_url:sub(1, 5) ~= "char:" then return end
-            local link_name = (link_url:sub(6):match("^%s*(.-)%s*$") or ""):lower()
-            if link_name == "" then return end
-            local found
-            for _, c in ipairs(plugin.db:load(book_id)) do
-                local cname = (c.name or ""):lower()
-                if cname:find(link_name, 1, true) or link_name:find(cname, 1, true) then
-                    found = c; break
-                end
-                for _, alias in ipairs(c.aliases or {}) do
-                    local al = alias:lower()
-                    if al:find(link_name, 1, true) or link_name:find(al, 1, true) then
-                        found = c; break
+        -- Build link specs for inline text linkification (all chars + codex, excluding self)
+        local self_names_lower = { [(char.name or ""):lower()] = true }
+        for _, a in ipairs(char.aliases or {}) do
+            if a ~= "" then self_names_lower[a:lower()] = true end
+        end
+        local link_specs = {}
+        for _, c in ipairs(plugin.db:load(book_id)) do
+            local cname = c.name or ""
+            if cname ~= "" and not self_names_lower[cname:lower()] then
+                link_specs[#link_specs+1] = { name = cname, scheme = "char", target = cname }
+                for _, a in ipairs(c.aliases or {}) do
+                    if a ~= "" and not self_names_lower[a:lower()] then
+                        link_specs[#link_specs+1] = { name = a, scheme = "char", target = cname }
                     end
                 end
-                if found then break end
             end
-            if found then
-                -- close_fn is captured inside UIShared; schedule navigation after close
-                UIManager:scheduleIn(0.15, function()
-                    UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
-                end)
+        end
+        for _, e in ipairs(all_codex) do
+            local ename = e.name or ""
+            if ename ~= "" then
+                link_specs[#link_specs+1] = { name = ename, scheme = "codex", target = ename }
+                for _, a in ipairs(e.aliases or {}) do
+                    if a ~= "" then
+                        link_specs[#link_specs+1] = { name = a, scheme = "codex", target = ename }
+                    end
+                end
+            end
+        end
+        table.sort(link_specs, function(a, b) return #a.name > #b.name end)
+
+        local html_css, html_body = UtilsCharacter.formatHTML(char, portrait_filename, inner_w, {
+            link_specs    = link_specs,
+            codex_entries = related_codex,
+        })
+
+        local function charLinkCallback(link)
+            local link_url = type(link) == "table" and (link.uri or "") or tostring(link)
+            local scheme, target = link_url:match("^([^:]+):(.+)$")
+            if not scheme then return end
+            target = (target:match("^%s*(.-)%s*$") or "")
+            if target == "" then return end
+            local target_lower = target:lower()
+
+            if scheme == "char" then
+                local found
+                for _, c in ipairs(plugin.db:load(book_id)) do
+                    local cname = (c.name or ""):lower()
+                    if cname:find(target_lower, 1, true) or target_lower:find(cname, 1, true) then
+                        found = c; break
+                    end
+                    for _, alias in ipairs(c.aliases or {}) do
+                        local al = alias:lower()
+                        if al:find(target_lower, 1, true) or target_lower:find(al, 1, true) then
+                            found = c; break
+                        end
+                    end
+                    if found then break end
+                end
+                if found then
+                    UIManager:scheduleIn(0.15, function()
+                        UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
+                    end)
+                end
+            elseif scheme == "codex" then
+                local UICodex = require("ui_codex")
+                local found
+                for _, e in ipairs(all_codex) do
+                    if (e.name or ""):lower() == target_lower then
+                        found = e; break
+                    end
+                end
+                if not found then
+                    for _, e in ipairs(all_codex) do
+                        local ename = (e.name or ""):lower()
+                        if ename:find(target_lower, 1, true) or target_lower:find(ename, 1, true) then
+                            found = e; break
+                        end
+                    end
+                end
+                if found then
+                    UIManager:scheduleIn(0.15, function()
+                        UICodex.showEntryViewer(plugin, book_id, found, refresh_browser_fn)
+                    end)
+                end
             end
         end
 

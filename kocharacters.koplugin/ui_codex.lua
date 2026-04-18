@@ -82,7 +82,69 @@ end
 -- HTML formatter
 -- ---------------------------------------------------------------------------
 
-local function formatHTML(entry, portrait_path, container_w)
+local function linkifyText(text, specs, esc_fn)
+    if not text or text == "" or not specs or #specs == 0 then
+        return esc_fn(text or "")
+    end
+    local segments = {{ text = text, linked = false }}
+    for _, spec in ipairs(specs) do
+        if #spec.name >= 3 then
+            local name_lower = spec.name:lower()
+            local new_segs = {}
+            for _, seg in ipairs(segments) do
+                if seg.linked then
+                    new_segs[#new_segs+1] = seg
+                else
+                    local s       = seg.text
+                    local s_lower = s:lower()
+                    local pos, emit = 1, 1
+                    while true do
+                        local si, ei = s_lower:find(name_lower, pos, true)
+                        if not si then
+                            if emit <= #s then
+                                new_segs[#new_segs+1] = { text = s:sub(emit), linked = false }
+                            end
+                            break
+                        end
+                        local before = si > 1  and s:sub(si-1, si-1) or " "
+                        local after  = ei < #s and s:sub(ei+1, ei+1) or " "
+                        if not before:match("[%a%d_%-]") and not after:match("[%a%d_%-]") then
+                            if si > emit then
+                                new_segs[#new_segs+1] = { text = s:sub(emit, si-1), linked = false }
+                            end
+                            new_segs[#new_segs+1] = {
+                                text   = s:sub(si, ei),
+                                linked = true,
+                                scheme = spec.scheme,
+                                target = spec.target,
+                            }
+                            pos = ei + 1; emit = ei + 1
+                        else
+                            pos = si + 1
+                        end
+                    end
+                end
+            end
+            segments = new_segs
+        end
+    end
+    local parts = {}
+    for _, seg in ipairs(segments) do
+        if seg.linked then
+            parts[#parts+1] = '<a href="' .. seg.scheme .. ':' .. esc_fn(seg.target) .. '">'
+                .. esc_fn(seg.text) .. '</a>'
+        else
+            parts[#parts+1] = esc_fn(seg.text)
+        end
+    end
+    return table.concat(parts)
+end
+
+-- opts.link_specs — array of {name, scheme, target} sorted longest-first; wraps names in links
+local function formatHTML(entry, portrait_path, container_w, opts)
+    opts = opts or {}
+    local link_specs = opts.link_specs or {}
+
     local function esc(s)
         s = tostring(s or "")
         s = s:gsub("&",  "&amp;")
@@ -90,6 +152,10 @@ local function formatHTML(entry, portrait_path, container_w)
         s = s:gsub(">",  "&gt;")
         s = s:gsub('"',  "&quot;")
         return s
+    end
+
+    local function linkify(text)
+        return linkifyText(text, link_specs, esc)
     end
 
     local css = table.concat({
@@ -124,12 +190,12 @@ local function formatHTML(entry, portrait_path, container_w)
 
     if entry.description and entry.description ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Description</div><p>'
-            .. esc(entry.description) .. '</p></div>'
+            .. linkify(entry.description) .. '</p></div>'
     end
 
     if entry.significance and entry.significance ~= "" then
         p[#p+1] = '<div class="section"><div class="label">Significance</div><p>'
-            .. esc(entry.significance) .. '</p></div>'
+            .. linkify(entry.significance) .. '</p></div>'
     end
 
     if entry.known_connections and #entry.known_connections > 0 then
@@ -316,7 +382,37 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
     local pf = io.open(portrait_path, "rb")
     if pf then pf:close(); portrait_fname = portrait_path:match("([^/]+)$") end
 
-    local html_css, html_body = formatHTML(entry, portrait_fname, inner_w)
+    -- Build link specs so named characters and codex entries in prose fields become clickable
+    local self_names_lower = { [(entry.name or ""):lower()] = true }
+    for _, a in ipairs(entry.aliases or {}) do
+        if a ~= "" then self_names_lower[a:lower()] = true end
+    end
+    local link_specs = {}
+    for _, c in ipairs(plugin.db:load(book_id)) do
+        local cname = c.name or ""
+        if cname ~= "" then
+            link_specs[#link_specs+1] = { name = cname, scheme = "char", target = cname }
+            for _, a in ipairs(c.aliases or {}) do
+                if a ~= "" then
+                    link_specs[#link_specs+1] = { name = a, scheme = "char", target = cname }
+                end
+            end
+        end
+    end
+    for _, e in ipairs(plugin.db_codex:load(book_id)) do
+        local ename = e.name or ""
+        if ename ~= "" and not self_names_lower[ename:lower()] then
+            link_specs[#link_specs+1] = { name = ename, scheme = "codex", target = ename }
+            for _, a in ipairs(e.aliases or {}) do
+                if a ~= "" and not self_names_lower[a:lower()] then
+                    link_specs[#link_specs+1] = { name = a, scheme = "codex", target = ename }
+                end
+            end
+        end
+    end
+    table.sort(link_specs, function(a, b) return #a.name > #b.name end)
+
+    local html_css, html_body = formatHTML(entry, portrait_fname, inner_w, { link_specs = link_specs })
 
     UIShared.showHtmlViewer{
         inner_w       = inner_w,
