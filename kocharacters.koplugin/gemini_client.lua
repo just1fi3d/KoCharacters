@@ -35,7 +35,7 @@ You are analyzing a passage from a novel or book.
 Your tasks:
 1. Extract any NEW named characters who are introduced or significantly described in this passage.
 2. Update the profiles of EXISTING characters (listed below) who appear in this passage.
-   - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments.
+   - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace existing values. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
    - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Existing character profiles to UPDATE (return updated profile only if they appear in this passage):
@@ -51,10 +51,11 @@ Rules:
 - If there is nothing to report, return an empty JSON array: []
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
+- Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
-- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage meaningfully changes or clarifies it. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary.
+- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary.
 - For defining_moments: only capture a "One-Way Door" event — one after which the character's status, body, or knowledge is permanently altered.
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
     Exclude: combat without consequence, travel, standard dialogue, temporary moods.
@@ -149,16 +150,17 @@ The character to update is:
 {{character}}
 
 Read the passage below and update the character's profile.
-- Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments.
+- Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace existing values. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
 - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Rules:
 - For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Do NOT append. Never list events or actions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
 - Never append raw actions or scene summaries to any field.
+- Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For defining_moments: ask — is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? If yes, add one past-tense sentence. If no, do not add anything. Append only; never remove or duplicate existing entries.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). Otherwise preserve unchanged.
-- For motivation: enrich if the passage meaningfully clarifies or changes what the character wants or fears; otherwise preserve unchanged.
+- For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Otherwise preserve unchanged.
 
 If this character does not appear in the passage at all, return an empty JSON array: []
 
