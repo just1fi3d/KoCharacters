@@ -415,12 +415,24 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
     end
     local all_codex = plugin.db_codex:load(book_id)
     local related_codex = {}
+    local function nameInText(name, text)
+        local nl, tl = name:lower(), text:lower()
+        local pos = 1
+        while true do
+            local si, ei = tl:find(nl, pos, true)
+            if not si then return false end
+            local before = si > 1    and text:sub(si-1, si-1) or " "
+            local after  = ei < #text and text:sub(ei+1, ei+1) or " "
+            if not before:match("[%a%d_%-]") and not after:match("[%a%d_%-]") then return true end
+            pos = si + 1
+        end
+    end
     for _, entry in ipairs(all_codex) do
         local matched = false
         for _, conn in ipairs(entry.known_connections or {}) do
             if matched then break end
             for n in pairs(char_names) do
-                if conn:find(n, 1, true) then
+                if nameInText(n, conn) then
                     table.insert(related_codex, entry)
                     matched = true
                     break
