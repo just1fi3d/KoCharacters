@@ -17,6 +17,32 @@ local EpubReader   = require("epub_reader")
 local Extraction = {}
 Extraction.__index = Extraction
 
+-- Returns true if character c is mentioned in text_lower.
+-- Checks full name, aliases, and individual name tokens (≥4 chars) with word boundaries,
+-- so "Marino" matches a page that says "Marino" even when the full name is "Helena Marino".
+local function charInText(c, text_lower)
+    local function wordFind(pattern)
+        local pos = 1
+        while true do
+            local si, ei = text_lower:find(pattern, pos, true)
+            if not si then return false end
+            local before = si > 1           and text_lower:sub(si-1, si-1) or " "
+            local after  = ei < #text_lower and text_lower:sub(ei+1, ei+1) or " "
+            if not before:match("[%a%d_%-]") and not after:match("[%a%d_%-]") then return true end
+            pos = si + 1
+        end
+    end
+    local name_lower = (c.name or ""):lower()
+    if wordFind(name_lower) then return true end
+    for _, alias in ipairs(c.aliases or {}) do
+        if alias ~= "" and wordFind(alias:lower()) then return true end
+    end
+    for token in name_lower:gmatch("%S+") do
+        if #token >= 4 and wordFind(token) then return true end
+    end
+    return false
+end
+
 -- deps:
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
@@ -111,7 +137,9 @@ function Extraction:hideScanIndicator()
     end
 end
 
-function Extraction:showExtractedCount(count)
+function Extraction:showExtractedCount(count, pageno)
+    local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
+    if level == "off" or level == "errors" then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
@@ -137,7 +165,7 @@ function Extraction:showExtractedCount(count)
                 height = 40,
             },
             TextWidget:new{
-                text = tostring(count),
+                text = (level == "full" and pageno) and ("p" .. pageno .. ":" .. count) or tostring(count),
                 face = Font:getFace("cfont", 20),
             },
         },
@@ -158,6 +186,8 @@ function Extraction:showExtractedCount(count)
 end
 
 function Extraction:showExtractError()
+    local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
+    if level == "off" then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
@@ -196,7 +226,9 @@ function Extraction:showExtractError()
     UIManager:scheduleIn(4, self._count_indicator_timer)
 end
 
-function Extraction:showCodexExtractedCount(count)
+function Extraction:showCodexExtractedCount(count, pageno)
+    local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
+    if level == "off" or level == "errors" then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
@@ -213,7 +245,7 @@ function Extraction:showCodexExtractedCount(count)
         bordersize = 0,
         padding    = 4,
         TextWidget:new{
-            text = "\u{25C8} " .. tostring(count),
+            text = (level == "full" and pageno) and ("\u{25C8} p" .. pageno .. ":" .. count) or ("\u{25C8} " .. tostring(count)),
             face = Font:getFace("cfont", 20),
         },
     }
@@ -429,15 +461,7 @@ function Extraction:_processCharacterJob(job, book_id)
     local page_lower = page_text:lower()
     local skip_names, chars_in_text = {}, {}
     for _, c in ipairs(existing) do
-        local found = page_lower:find((c.name or ""):lower(), 1, true)
-        if not found and c.aliases then
-            for _, alias in ipairs(c.aliases) do
-                if alias ~= "" and page_lower:find(alias:lower(), 1, true) then
-                    found = true; break
-                end
-            end
-        end
-        if found then table.insert(chars_in_text, c)
+        if charInText(c, page_lower) then table.insert(chars_in_text, c)
         else table.insert(skip_names, c.name) end
     end
 
@@ -519,14 +543,24 @@ function Extraction:_processCharacterJob(job, book_id)
                      or api_err:find("quota") or api_err:find("high demand") or api_err:find("overload"))
             local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
-                self_ref.db:markPagePending(book_ref, page_ref)
-                self_ref:showExtractError()
-                self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — will retry (" .. err_str .. ")")
+                local retries = (job.retries or 0)
+                if retries < 2 then
+                    local delay = 8 * (2 ^ retries)
+                    job.retries = retries + 1
+                    table.insert(self_ref._extract_queue, 1, job)
+                    self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — retry " .. job.retries .. "/2 in " .. delay .. "s")
+                    UIManager:scheduleIn(delay, function() self_ref:_processNextInQueue() end)
+                else
+                    self_ref.db:markPagePending(book_ref, page_ref)
+                    self_ref:showExtractError()
+                    self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — max retries, marked pending (" .. err_str .. ")")
+                    self_ref:_processNextInQueue()
+                end
             else
                 self_ref.db:markPageScanned(book_ref, page_ref)
                 self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API error — skipped (" .. err_str .. ")")
+                self_ref:_processNextInQueue()
             end
-            self_ref:_processNextInQueue()
             return
         end
 
@@ -538,7 +572,7 @@ function Extraction:_processCharacterJob(job, book_id)
         self_ref.db:markPageScanned(book_ref, page_ref)
 
         if not characters or #characters == 0 then
-            self_ref:showExtractedCount(0)
+            self_ref:showExtractedCount(0, page_ref)
             self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
                 self_ref:_checkAndPromptPendingPages(book_ref)
                 self_ref:_processNextInQueue()
@@ -551,7 +585,7 @@ function Extraction:_processCharacterJob(job, book_id)
                 self_ref.db:merge(book_ref, resolved, page_ref)
             end
             self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found")
-            self_ref:showExtractedCount(#characters)
+            self_ref:showExtractedCount(#characters, page_ref)
             self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
                 self_ref:_checkAndPromptPendingPages(book_ref)
                 self_ref:_processNextInQueue()
@@ -576,7 +610,8 @@ function Extraction:_processCodexJob(job, book_id)
 end
 
 -- Async codex enrichment — spawns a subprocess and polls, then calls on_done when finished.
-function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
+-- retries tracks how many times this page has already been retried (default 0, max 2).
+function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, retries)
     if self._codex_scanned[pageno] then
         if on_done then on_done() end
         return
@@ -654,14 +689,24 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
                      or api_err:find("429") or api_err:find("quota") or api_err:find("overload"))
             local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
-                self_ref._codex_pending[pageno] = true
-                self_ref:showExtractError()
-                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry (" .. err_str .. ")")
+                local r = retries or 0
+                if r < 2 then
+                    local delay = 8 * (2 ^ r)
+                    self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — retry " .. (r + 1) .. "/2 in " .. delay .. "s")
+                    UIManager:scheduleIn(delay, function()
+                        self_ref:_runCodexEnrichment(book_id, pageno, page_text, on_done, r + 1)
+                    end)
+                else
+                    self_ref._codex_pending[pageno] = true
+                    self_ref:showExtractError()
+                    self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — max retries, marked pending (" .. err_str .. ")")
+                    if on_done then on_done() end
+                end
             else
                 self_ref._codex_scanned[pageno] = true
                 self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API error — skipped (" .. err_str .. ")")
+                if on_done then on_done() end
             end
-            if on_done then on_done() end
             return
         end
 
@@ -670,7 +715,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
         self_ref._codex_pending[pageno] = nil
         if updated and #updated > 0 then
             self_ref.db_codex:merge(book_id, updated, pageno)
-            self_ref:showCodexExtractedCount(#updated)
+            self_ref:showCodexExtractedCount(#updated, pageno)
             self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
         end
         self_ref:_drainCodexPending()
@@ -733,15 +778,8 @@ function Extraction:autoExtract(page_num)
     local page_lower = page_text:lower()
     local skip_names, chars_in_text = {}, {}
     for _, c in ipairs(existing) do
-        local found = page_lower:find((c.name or ""):lower(), 1, true)
-        if not found and c.aliases then
-            for _, alias in ipairs(c.aliases) do
-                if alias ~= "" and page_lower:find(alias:lower(), 1, true) then
-                    found = true; break
-                end
-            end
-        end
-        if found then table.insert(chars_in_text, c) else table.insert(skip_names, c.name) end
+        if charInText(c, page_lower) then table.insert(chars_in_text, c)
+        else table.insert(skip_names, c.name) end
     end
 
     local client = GeminiClient:new(api_key)
@@ -781,7 +819,7 @@ function Extraction:autoExtract(page_num)
         if #resolved > 0 then self.db:merge(book_id, resolved, cur_page) end
         self:hideScanIndicator()
         self._auto_extracting = false
-        self:showExtractedCount(#characters)
+        self:showExtractedCount(#characters, cur_page)
         self:_checkAndPromptPendingPages(book_id)
     end, cur_page, true)
 end
@@ -879,13 +917,7 @@ function Extraction:onScanPendingPages(book_id)
         local page_lower = page_text:lower()
         local chars_in_text, skip_names = {}, {}
         for _, c in ipairs(all_chars) do
-            local found = c.name and page_lower:find(c.name:lower(), 1, true)
-            if not found and c.aliases then
-                for _, alias in ipairs(c.aliases) do
-                    if alias ~= "" and page_lower:find(alias:lower(), 1, true) then found = true; break end
-                end
-            end
-            if found then table.insert(chars_in_text, c)
+            if charInText(c, page_lower) then table.insert(chars_in_text, c)
             else table.insert(skip_names, c.name) end
         end
 
@@ -907,8 +939,18 @@ function Extraction:onScanPendingPages(book_id)
         end
 
         if api_err then
-            logger.warn("KoCharacters: pending scan p" .. page_num .. ": " .. tostring(api_err))
-            table.insert(scanned_ok, page_num)
+            local err_str = tostring(api_err):sub(1, 120)
+            logger.warn("KoCharacters: pending scan p" .. page_num .. ": " .. err_str)
+            local is_retryable = api_err:find("Network error") or api_err:find("503")
+                or api_err:find("429") or api_err:find("quota")
+                or api_err:find("high demand") or api_err:find("overload")
+            if is_retryable then
+                self_ref.db:markPagePending(book_id, page_num)
+                self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": API busy — kept pending (" .. err_str .. ")")
+            else
+                table.insert(scanned_ok, page_num)
+                self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": API error — skipped (" .. err_str .. ")")
+            end
         elseif characters and #characters > 0 then
             local ex_chars = self_ref.db:load(book_id)
             local ic = UtilsCharacter.findIncomingConflicts(ex_chars, characters)
@@ -978,15 +1020,7 @@ function Extraction:onExtractCurrentPage()
         local skip_names    = {}
         local page_lower    = page_text:lower()
         for _, c in ipairs(all_chars) do
-            local found = c.name and page_lower:find(c.name:lower(), 1, true)
-            if not found and c.aliases then
-                for _, alias in ipairs(c.aliases) do
-                    if alias ~= "" and page_lower:find(alias:lower(), 1, true) then
-                        found = true; break
-                    end
-                end
-            end
-            if found then table.insert(chars_in_text, c)
+            if charInText(c, page_lower) then table.insert(chars_in_text, c)
             else table.insert(skip_names, c.name) end
         end
         logger.info("KoCharacters: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
@@ -1307,15 +1341,7 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
         local chars_in_text  = {}
         local skip_names     = {}
         for _, c in ipairs(all_chars) do
-            local found = c.name and combined_lower:find(c.name:lower(), 1, true)
-            if not found and c.aliases then
-                for _, alias in ipairs(c.aliases) do
-                    if alias ~= "" and combined_lower:find(alias:lower(), 1, true) then
-                        found = true; break
-                    end
-                end
-            end
-            if found then table.insert(chars_in_text, c)
+            if charInText(c, combined_lower) then table.insert(chars_in_text, c)
             else table.insert(skip_names, c.name) end
         end
 
@@ -1332,9 +1358,13 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
         end
 
         if not ok then
-            logger.warn("KoCharacters: batch " .. batch_num .. " pcall: " .. tostring(call_err))
+            local err_str = tostring(call_err):sub(1, 80)
+            logger.warn("KoCharacters: batch " .. batch_num .. " pcall: " .. err_str)
+            self_ref._append_log(book_id, "Chapter scan pp." .. batch_start .. "-" .. batch_end .. ": error (" .. err_str .. ")")
         elseif err then
-            logger.warn("KoCharacters: batch " .. batch_num .. " api: " .. tostring(err))
+            local err_str = tostring(err):sub(1, 80)
+            logger.warn("KoCharacters: batch " .. batch_num .. " api: " .. err_str)
+            self_ref._append_log(book_id, "Chapter scan pp." .. batch_start .. "-" .. batch_end .. ": API error (" .. err_str .. ")")
         elseif characters and #characters > 0 then
             local ex_chars     = self_ref.db:load(book_id)
             local ic           = UtilsCharacter.findIncomingConflicts(ex_chars, characters)

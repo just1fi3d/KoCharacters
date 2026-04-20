@@ -377,6 +377,28 @@ function UISettings.open(plugin)
             },
             {
                 text_func = function()
+                    local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
+                    local labels = { full = "Page + count", count = "Count only", errors = "Errors only", off = "Off" }
+                    return "Result toasts: " .. (labels[level] or "Page + count")
+                end,
+                callback = function()
+                    local cycle = { "full", "count", "errors", "off" }
+                    local current = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
+                    local next_level = "full"
+                    for i, v in ipairs(cycle) do
+                        if v == current then
+                            next_level = cycle[(i % #cycle) + 1]
+                            break
+                        end
+                    end
+                    G_reader_settings:saveSetting("kocharacters_toast_level", next_level)
+                    UIManager:close(settings_menu)
+                    UISettings.open(plugin)
+                end,
+                help = "Controls what appears in the on-screen toast after each page scan. 'Page + count' shows the page number and how many items were updated (e.g. p142:3). 'Count only' shows just the number. 'Errors only' suppresses success toasts but still shows API error warnings. 'Off' disables all toasts.",
+            },
+            {
+                text_func = function()
                     return "Scan indicator icon: "
                         .. (G_reader_settings:readSetting("kocharacters_scan_indicator") ~= false and "ON" or "OFF")
                 end,

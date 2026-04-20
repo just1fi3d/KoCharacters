@@ -413,6 +413,15 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
     for _, a in ipairs(char.aliases or {}) do
         if a and a ~= "" then char_names[a] = true end
     end
+    -- Codex known_connections often use a single name token (e.g. "Helena") for a character
+    -- whose full name is "Helena Marino". Add individual tokens (≥4 chars) so partial matches work.
+    local initial_names = {}
+    for n in pairs(char_names) do initial_names[#initial_names+1] = n end
+    for _, n in ipairs(initial_names) do
+        for token in n:gmatch("%S+") do
+            if #token >= 4 then char_names[token] = true end
+        end
+    end
     local all_codex = plugin.db_codex:load(book_id)
     local related_codex = {}
     local function nameInText(name, text)
