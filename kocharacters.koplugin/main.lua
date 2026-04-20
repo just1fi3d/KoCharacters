@@ -85,6 +85,21 @@ function KoCharacters:init()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
+    -- Clean up any stale async temp files left by a previous crash/restart.
+    local DataStorage = require("datastorage")
+    local tmp_dir = DataStorage:getDataDir() .. "/kocharacters"
+    local f = io.popen('ls "' .. tmp_dir .. '"/ 2>/dev/null')
+    if f then
+        for name in f:lines() do
+            if name:find("%.async_req_", 1, true) or name:find("%.async_resp_", 1, true)
+               or name == ".codex_create_req.json" or name == ".codex_create_resp.json" then
+                os.remove(tmp_dir .. "/" .. name)
+                logger.info("KoCharacters: cleaned stale async file: " .. name)
+            end
+        end
+        f:close()
+    end
+
     local self_ref = self
     self.extraction = Extraction.new({
         db          = self.db,
