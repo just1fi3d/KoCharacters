@@ -59,6 +59,9 @@ function Extraction.new(deps)
     -- In-memory set of pages where codex enrichment has run this session.
     -- Cleared when a new codex entry is added so new entries get picked up.
     self._codex_scanned         = {}
+    -- Pages where codex enrichment hit a retryable API error and had entries to match.
+    -- Drained (re-enqueued) after the next successful codex call.
+    self._codex_pending         = {}
     -- Indicator widget state
     self._scan_indicator        = nil
     self._count_indicator       = nil
@@ -345,6 +348,7 @@ function Extraction:cleanup()
     self._extract_queue   = {}
     self._extract_running = false
     self._codex_scanned   = {}
+    self._codex_pending   = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -513,12 +517,14 @@ function Extraction:_processCharacterJob(job, book_id)
             local is_retryable = type(api_err) == "string"
                 and (api_err:find("Network error") or api_err:find("503") or api_err:find("429")
                      or api_err:find("quota") or api_err:find("high demand") or api_err:find("overload"))
+            local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
                 self_ref.db:markPagePending(book_ref, page_ref)
                 self_ref:showExtractError()
-                self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — will retry")
+                self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — will retry (" .. err_str .. ")")
             else
                 self_ref.db:markPageScanned(book_ref, page_ref)
+                self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API error — skipped (" .. err_str .. ")")
             end
             self_ref:_processNextInQueue()
             return
@@ -619,6 +625,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
             logger.warn("KoCharacters: codex poll timeout page=" .. tostring(pageno))
             os.remove(req_file)
             os.remove(resp_file)
+            self_ref._codex_pending[pageno] = true
             self_ref:showExtractError()
             self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": timed out — will retry")
             if on_done then on_done() end
@@ -645,11 +652,14 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
             local is_retryable = type(api_err) == "string"
                 and (api_err:find("Network error") or api_err:find("503")
                      or api_err:find("429") or api_err:find("quota") or api_err:find("overload"))
+            local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
+                self_ref._codex_pending[pageno] = true
                 self_ref:showExtractError()
-                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry")
+                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — will retry (" .. err_str .. ")")
             else
                 self_ref._codex_scanned[pageno] = true
+                self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API error — skipped (" .. err_str .. ")")
             end
             if on_done then on_done() end
             return
@@ -657,11 +667,13 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done)
 
         if usage then self_ref._record_usage(usage) end
         self_ref._codex_scanned[pageno] = true
+        self_ref._codex_pending[pageno] = nil
         if updated and #updated > 0 then
             self_ref.db_codex:merge(book_id, updated, pageno)
             self_ref:showCodexExtractedCount(#updated)
             self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
         end
+        self_ref:_drainCodexPending()
         if on_done then on_done() end
     end
 
@@ -670,6 +682,30 @@ end
 
 function Extraction:clearCodexScanned()
     self._codex_scanned = {}
+end
+
+-- Re-enqueue pages that had a retryable codex error. Called after a successful
+-- codex API response, while the API is demonstrably reachable.
+function Extraction:_drainCodexPending()
+    local pending = {}
+    for pageno in pairs(self._codex_pending) do
+        table.insert(pending, pageno)
+    end
+    if #pending == 0 then return end
+    self._codex_pending = {}
+    for _, pageno in ipairs(pending) do
+        if not self._codex_scanned[pageno] then
+            local already = false
+            for _, job in ipairs(self._extract_queue) do
+                if job.pageno == pageno and job.type == "codex" then
+                    already = true; break
+                end
+            end
+            if not already then
+                table.insert(self._extract_queue, { type = "codex", pageno = pageno })
+            end
+        end
+    end
 end
 
 -- ---------------------------------------------------------------------------
