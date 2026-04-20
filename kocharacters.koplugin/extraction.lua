@@ -792,14 +792,33 @@ end
 
 function Extraction:_checkAndPromptPendingPages(book_id)
     if self._pending_notified then return end
-    if not self.db:hasPendingPages(book_id) then return end
+    local char_pages  = self.db:loadPendingPages(book_id)
+    local codex_count = 0
+    for _ in pairs(self._codex_pending) do codex_count = codex_count + 1 end
+    if #char_pages == 0 and codex_count == 0 then return end
     self._pending_notified = true
-    local pages    = self.db:loadPendingPages(book_id)
+
+    local parts = {}
+    if #char_pages > 0 then
+        parts[#parts+1] = #char_pages .. " character page(s)"
+    end
+    if codex_count > 0 then
+        parts[#parts+1] = codex_count .. " codex page(s)"
+    end
+
     local self_ref = self
     UIManager:show(ConfirmBox:new{
-        text    = #pages .. " page(s) couldn't be scanned while offline.\nScan them now?",
-        ok_text = "Scan",
-        ok_callback = function() self_ref:onScanPendingPages(book_id) end,
+        text    = table.concat(parts, " and ") .. " couldn't be scanned while the API was busy.\nRetry now?",
+        ok_text = "Retry",
+        ok_callback = function()
+            if #char_pages > 0 then self_ref:onScanPendingPages(book_id) end
+            if codex_count > 0 then
+                self_ref:_drainCodexPending()
+                if not self_ref._extract_running and #self_ref._extract_queue > 0 then
+                    self_ref:_processNextInQueue()
+                end
+            end
+        end,
     })
 end
 
