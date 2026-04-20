@@ -359,16 +359,34 @@ function KoCharacters:showMsg(text, timeout)
     })
 end
 
+local ACTIVITY_LOG_MAX_LINES = 500
+
 function KoCharacters:appendActivityLog(book_id, message)
     if not book_id then return end
     local DataStorage = require("datastorage")
     local dir = DataStorage:getDataDir() .. "/kocharacters/" .. book_id
     local util = require("util")
     util.makePath(dir)
-    local f = io.open(dir .. "/activity.log", "a")
+    local path = dir .. "/activity.log"
+    local f = io.open(path, "a")
     if not f then return end
     f:write("[" .. os.date("%Y-%m-%d %H:%M") .. "] " .. message .. "\n")
     f:close()
+    -- Trim to cap
+    local rf = io.open(path, "r")
+    if not rf then return end
+    local lines = {}
+    for line in rf:lines() do lines[#lines+1] = line end
+    rf:close()
+    if #lines > ACTIVITY_LOG_MAX_LINES then
+        local wf = io.open(path, "w")
+        if wf then
+            for i = #lines - ACTIVITY_LOG_MAX_LINES + 1, #lines do
+                wf:write(lines[i] .. "\n")
+            end
+            wf:close()
+        end
+    end
 end
 
 function KoCharacters:onViewActivityLog()
