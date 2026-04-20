@@ -191,6 +191,7 @@ GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT = [[
 You are cleaning up world-building entries from a book. Some text fields may contain repeated or redundant information built up incrementally.
 
 For each entry, clean up these fields:
+- name: apply Title Case (e.g. "Transference", "Animancer"). Preserve all-caps acronyms. Do not change proper nouns that are already correctly cased.
 - description: remove repetitions, combine fragmented observations into one fluent paragraph. If it has grown into an exhaustive list of observed instances or uses, synthesize into a general characterization of what the thing is and how it works.
 - significance: same — one coherent statement of narrative role. Must be distinct from description (not a restatement of what the thing does).
 - known_connections: normalize to "Name (relationship)" format, deduplicate. Replace any role descriptors (e.g. "protagonist", "subject") with the character's actual name if it can be inferred from context.
