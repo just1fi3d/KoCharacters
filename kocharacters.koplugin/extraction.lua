@@ -1254,7 +1254,8 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
         self_ref._show_msg(
             "Chapter scan complete.\n"
             .. "Batches: " .. total_batches .. " (" .. page_count .. " pages, " .. PAGES_PER_BATCH .. " per batch)\n"
-            .. "Characters found/updated: " .. total_found,
+            .. "Characters found/updated: " .. total_found .. "\n"
+            .. "(Codex entries enriched per batch where matched)",
             6
         )
     end
@@ -1350,6 +1351,27 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
             end
             if #remaining > 0 then self_ref.db:merge(book_id, remaining, batch_end) end
             total_found = total_found + #characters
+        end
+
+        -- Codex enrichment for this batch
+        local codex_entries = self_ref.db_codex:getEntriesForPage(book_id, combined_text)
+        if #codex_entries > 0 then
+            local updated, cerr, cusage
+            local cok, ccall_err = pcall(function()
+                updated, cerr, cusage = client:enrichCodexEntries(
+                    combined_text, codex_entries, self_ref._get_codex_update_prompt())
+            end)
+            if cok and not cerr then self_ref._record_usage(cusage) end
+            if cok and not cerr and updated and #updated > 0 then
+                self_ref.db_codex:merge(book_id, updated, batch_end)
+                self_ref._append_log(book_id, "Chapter scan codex pp." .. batch_start
+                    .. "-" .. batch_end .. ": " .. #updated .. " updated")
+            elseif cerr then
+                logger.warn("KoCharacters: chapter scan codex batch " .. batch_num
+                    .. ": " .. tostring(cerr))
+                self_ref._append_log(book_id, "Chapter scan codex pp." .. batch_start
+                    .. "-" .. batch_end .. ": API error (" .. tostring(cerr):sub(1, 80) .. ")")
+            end
         end
 
         UIManager:scheduleIn(3, function() processBatch(batch_end + 1) end)
