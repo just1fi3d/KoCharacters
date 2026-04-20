@@ -749,7 +749,10 @@ function UICodex.onCleanupAllEntries(plugin)
                     end
                 end
             end
-            if changed then plugin.db_codex:save(book_id, all_entries) end
+            if changed then
+                plugin.db_codex:save(book_id, all_entries)
+                plugin.db_codex:normalizeConnections(book_id, plugin.db:load(book_id))
+            end
         end
 
         i = i + BATCH_SIZE

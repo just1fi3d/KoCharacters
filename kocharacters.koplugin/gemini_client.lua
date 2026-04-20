@@ -50,6 +50,8 @@ Rules:
 - For new characters: only include if there is enough information to build a meaningful profile.
 - If there is nothing to report, return an empty JSON array: []
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
+- For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
+- For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Luc" is confirmed to be "Luc Holdfast"), use the full name and put the short name in aliases.
 - For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
 - For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
@@ -60,9 +62,8 @@ Rules:
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
     Exclude: combat without consequence, travel, standard dialogue, temporary moods.
   Each entry must be one sentence in past tense. Append new entries; never duplicate existing ones.
-- For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
+- For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. If an existing character is named "Helena Marino", write "Helena Marino (ally)", never "Helena (ally)". Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
 - For role: default to "supporting" rather than "unknown" unless there is a clear reason the character cannot be classified.
-- For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Luc" is confirmed to be "Luc Holdfast"), use the full name and put the short name in aliases.
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
@@ -117,7 +118,7 @@ Key points shown above:
 
 Return ONLY a valid JSON object with no markdown formatting, no code fences, no explanation, no extra text — just the raw JSON object with this exact structure:
 {
-  "book_context": "2-3 sentences describing the genre, country/region, and historical period or era of the story. Current known context: {{book_context}} — update and expand this if the passage adds new information, otherwise return it unchanged. Leave empty string only if nothing is known.",
+  "book_context": "Genre, setting, country/region, and era — 2-3 sentences",
   "characters": [
     {
       "name": "Full name or best available name",
@@ -159,8 +160,30 @@ Rules:
 - Never append raw actions or scene summaries to any field.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For defining_moments: ask — is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? If yes, add one past-tense sentence. If no, do not add anything. Append only; never remove or duplicate existing entries.
-- For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). Otherwise preserve unchanged.
+- For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). Only include abilities the text explicitly establishes or acknowledges — never infer from personality. Otherwise preserve unchanged.
 - For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Otherwise preserve unchanged.
+- For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
+- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
+
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Character to update:
+{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}
+
+Passage:
+Helena moved through the crowded mess hall without drawing attention, cataloguing faces. She had learned from Kaine Ferron's sessions what it cost to be noticed — stillness was its own armour. Her collar-bones showed sharp above her prison shift. Warden Tane watched her from the doorway, expression flat.
+
+Correct output:
+[{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair; her collar-bones are prominently visible.","personality":"Disciplined and self-contained, she moves through dangerous spaces with deliberate invisibility — cataloguing people before allowing herself to react.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)","Warden Tane (guard)"]}]
+
+Key points shown above:
+- personality is a fresh unified rewrite, not an append — not "Disciplined and observant. She has learned to move without drawing attention."
+- physical_description incorporates new explicit detail from the passage.
+- motivation and defining_moments are unchanged — nothing in this passage warrants updating them.
+- "Kaine Ferron" uses the exact name from the existing profile, not "Ferron" or "Kaine".
+- Warden Tane is added as a new relationship using the name as it appears in the passage.
+---
 
 If this character does not appear in the passage at all, return an empty JSON array: []
 
@@ -176,7 +199,7 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
     "motivation": "What drives this character at their core — stable goal, fear, or belief. Empty string if unknown.",
     "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
-    "role": "protagonist or antagonist or supporting or unknown",
+    "role": "protagonist or antagonist or supporting",
     "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\". One entry per named person."]
   }
 ]
@@ -199,6 +222,21 @@ For each entry, clean up these fields:
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of entries in the same order. Each element must have exactly these keys:
 [{ "name": "...", "description": "...", "significance": "...", "known_connections": ["..."], "aliases": ["..."] }]
+
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Input:
+[{"name":"transference","type":"concept","description":"A vivimantic technique that moves pain or injury from one body to another.; Transference is when a vivimancer takes physical suffering experienced by one person and forces it into another subject. It has been used as an interrogation method. It is a vivimantic technique for moving sensations between subjects.","significance":"Used by regime interrogators to extract confessions.","known_connections":["Helena (subject)","Doctor Stroud (interrogator)","Doctor Stroud (practitioner)"],"aliases":["transferred","transferring"]}]
+
+Correct output:
+[{"name":"Transference","type":"concept","description":"A vivimantic technique that moves physical pain or injury from one body into another. It is used as an interrogation method, forcing a subject to experience sensations extracted from another person.","significance":"Used by regime interrogators to extract confessions and break prisoners.","known_connections":["Helena (subject)","Doctor Stroud (practitioner)"],"aliases":["transferred","transferring"]}]
+
+Key points shown above:
+- name promoted to Title Case.
+- Three description fragments ("A vivimantic technique..."; "Transference is when..."; "It is a vivimantic technique...") merged into one coherent paragraph with no repeated ideas.
+- Duplicate known_connections entry for Doctor Stroud collapsed into one canonical form.
+---
 
 Entries to clean:
 {{entries}}
@@ -1025,6 +1063,24 @@ Rules:
 - first_appearance_quote: a short verbatim quote from the passage where this term first appears.
 - If the passage doesn't contain enough information to meaningfully describe this term, return just the type and a one-sentence description. Do not fabricate details.
 
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Term flagged: "Vivimancy"
+
+Passage:
+"You have been selected for Transference," Doctor Stroud said, arranging her instruments with practiced efficiency. Vivimancy — the art of moving pain, memory, or sensation between living bodies — was the regime's preferred interrogation method. Its practitioners, vivimancers, were both feared and indispensable. Stroud herself had trained under the Undying before the occupation.
+
+Correct output:
+{"name":"Vivimancy","type":"concept","description":"A magical discipline that moves pain, memory, or sensation between living bodies. Practitioners are trained specialists deployed extensively as interrogators.","significance":"The regime's primary interrogation method, making vivimancers indispensable to its power structure.","known_connections":["Doctor Stroud (practitioner)","The Undying (training institution)"],"aliases":["vivimancer","vivimancers","vivimantic"],"first_appearance_quote":"Vivimancy — the art of moving pain, memory, or sensation between living bodies — was the regime's preferred interrogation method."}
+
+Key points shown above:
+- description is a general characterization of what vivimancy is, not a scene summary.
+- significance is distinct from description — it states narrative role, not mechanism.
+- known_connections uses actual names ("Doctor Stroud"), never role descriptors like "the protagonist" or "the subject".
+- aliases captures all derived word forms found in the passage.
+---
+
 Return ONLY a valid JSON object (no markdown, no code fences, no explanation):
 {
   "name": "{{name}}",
@@ -1057,11 +1113,31 @@ For each entry that appears in this passage:
 If an entry does not appear in this passage, omit it from the results entirely.
 If no entries appear at all, return an empty array: []
 
+---
+EXAMPLE — illustrative only; do not include this in your response:
+
+Existing entries:
+[{"name":"Vivimancy","type":"concept","description":"A magical discipline that moves pain, memory, or sensation between living bodies. Practitioners are trained specialists deployed extensively as interrogators.","significance":"The regime's primary interrogation method.","known_connections":["Doctor Stroud (practitioner)"],"aliases":["vivimancer","vivimancers"],"first_appearance_quote":"Vivimancy — the art of moving pain, memory, or sensation between living bodies."}]
+
+Passage:
+Helena had not known vivimancy could transfer skill as well as suffering. That was what Morrough had done — taken ten years of a cellist's muscle memory and pressed it into her hands overnight. Vivimantic transference of ability was considered experimental even within the Academy.
+
+Correct output:
+[{"name":"Vivimancy","type":"concept","description":"A magical discipline that moves pain, memory, sensation, or learned physical skill between living bodies. Practitioners are trained specialists; more experimental applications include the transference of ability.","significance":"The regime's primary interrogation method, with experimental uses extending to skill transfer.","known_connections":["Doctor Stroud (practitioner)","Morrough (practitioner)","The Academy (governing institution)"],"aliases":["vivimancer","vivimancers","vivimantic"],"first_appearance_quote":"Vivimancy — the art of moving pain, memory, or sensation between living bodies."}]
+
+Key points shown above:
+- description is a fresh synthesis — not the old text with a sentence appended.
+- significance updated to reflect new narrative scope revealed by this passage.
+- known_connections extended with new entries; no duplicates.
+- aliases extended with "vivimantic" found in this passage.
+- first_appearance_quote preserved exactly.
+---
+
 Return ONLY a valid JSON array (no markdown, no code fences) containing only the entries that appeared in the passage:
 [
   {
     "name": "...",
-    "type": "place or faction or concept or object or species or unknown",
+    "type": "place or faction or concept or object or species",
     "description": "...",
     "significance": "...",
     "known_connections": ["Name (relationship) — one entry per named entity"],

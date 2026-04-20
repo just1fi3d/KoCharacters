@@ -120,21 +120,26 @@ function KoCharacters:init()
         end,
     })
 
-    -- Add "Find character" option to the word selection / highlight popup
+    -- Add "View character" option to the word selection / highlight popup (only when the word matches a known character)
     if self.ui.highlight and self.ui.highlight.addToHighlightDialog then
         local self_ref = self
         self.ui.highlight:addToHighlightDialog("kocharacters_lookup", function(highlight_instance)
+            local selected = highlight_instance.selected_text
+            local word = selected and (selected.text or selected.word or "") or ""
+            word = word:match("^%s*(.-)%s*$") or ""
+            if word == "" then return nil end
+            local book_id = self_ref:getBookID()
+            if not book_id then return nil end
+            local all_chars = self_ref.db:load(book_id)
+            if #all_chars == 0 then return nil end
+            local matches = UICharacter.findMatchesForWord(all_chars, word)
+            if #matches == 0 then return nil end
             return {
-                text = "Find character",
+                text = "View character",
                 callback = function()
-                    local selected = highlight_instance.selected_text
-                    local word = selected and (selected.text or selected.word or "") or ""
-                    word = word:match("^%s*(.-)%s*$") or ""
                     if highlight_instance.highlight_dialog then
                         UIManager:close(highlight_instance.highlight_dialog)
                     end
-                    -- Clear the text selection so it doesn't show the highlight menu
-                    -- again after the character viewer is closed.
                     pcall(function() highlight_instance:clear() end)
                     UIManager:scheduleIn(0.1, function()
                         UICharacter.onWordCharacterLookup(self_ref, word)

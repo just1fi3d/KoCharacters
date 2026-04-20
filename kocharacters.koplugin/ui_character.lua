@@ -1417,6 +1417,38 @@ end
 -- Word-selection character lookup (called from highlight popup)
 -- ---------------------------------------------------------------------------
 
+local _stop_words = { the=1, a=1, an=1, of=1, ["in"]=1, at=1, to=1, ["and"]=1, ["or"]=1, ["for"]=1,
+                      with=1, by=1, on=1, from=1, is=1, was=1, he=1, she=1, his=1, her=1 }
+
+function UICharacter.findMatchesForWord(all_chars, word)
+    local word_lower = word:lower()
+    local tokens = { word_lower }
+    for w in word_lower:gmatch("%a+") do
+        if #w >= 3 and not _stop_words[w] then
+            table.insert(tokens, w)
+        end
+    end
+    local matches = {}
+    for _, c in ipairs(all_chars) do
+        local matched = false
+        local name_l = (c.name or ""):lower()
+        for _, tok in ipairs(tokens) do
+            if name_l:find(tok, 1, true) then matched = true; break end
+        end
+        if not matched then
+            for _, alias in ipairs(c.aliases or {}) do
+                local alias_l = alias:lower()
+                for _, tok in ipairs(tokens) do
+                    if alias_l:find(tok, 1, true) then matched = true; break end
+                end
+                if matched then break end
+            end
+        end
+        if matched then table.insert(matches, c) end
+    end
+    return matches
+end
+
 function UICharacter.onWordCharacterLookup(plugin, word)
     if not word or word == "" then
         plugin:showMsg("No word selected.")
@@ -1435,34 +1467,7 @@ function UICharacter.onWordCharacterLookup(plugin, word)
         return
     end
 
-    local stop = { the=1, a=1, an=1, of=1, ["in"]=1, at=1, to=1, ["and"]=1, ["or"]=1, ["for"]=1,
-                   with=1, by=1, on=1, from=1, is=1, was=1, he=1, she=1, his=1, her=1 }
-    local word_lower = word:lower()
-    local tokens = { word_lower }
-    for w in word_lower:gmatch("%a+") do
-        if #w >= 3 and not stop[w] then
-            table.insert(tokens, w)
-        end
-    end
-
-    local function charMatches(c)
-        local name_l = (c.name or ""):lower()
-        for _, tok in ipairs(tokens) do
-            if name_l:find(tok, 1, true) then return true end
-        end
-        for _, alias in ipairs(c.aliases or {}) do
-            local alias_l = alias:lower()
-            for _, tok in ipairs(tokens) do
-                if alias_l:find(tok, 1, true) then return true end
-            end
-        end
-        return false
-    end
-
-    local matches = {}
-    for _, c in ipairs(all_chars) do
-        if charMatches(c) then table.insert(matches, c) end
-    end
+    local matches = UICharacter.findMatchesForWord(all_chars, word)
 
     if #matches == 0 then
         plugin:showMsg('"' .. word .. '" not found in character database.')

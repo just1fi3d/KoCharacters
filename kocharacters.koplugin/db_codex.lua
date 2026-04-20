@@ -202,4 +202,70 @@ function CodexDB:clear(book_md5)
     os.remove(self:dbPath(book_md5))
 end
 
+-- Expand partial names in known_connections to full character names where unambiguous.
+-- E.g. "Helena (subject)" → "Helena Marino (subject)" if Helena Marino is the only match.
+-- characters: array of character records from CharacterDB:load()
+function CodexDB:normalizeConnections(book_md5, characters)
+    if not characters or #characters == 0 then return end
+    local entries = self:load(book_md5)
+    if #entries == 0 then return end
+
+    -- Returns true if partial_lower is a word-boundary prefix of full_lower but not equal
+    local function isPartialPrefix(partial_lower, full_lower)
+        if partial_lower == full_lower then return false end
+        return full_lower:sub(1, #partial_lower + 1) == partial_lower .. " "
+    end
+
+    -- Build a set of exact character names (lower) for already-full check
+    local exact = {}
+    for _, c in ipairs(characters) do
+        if c.name and c.name ~= "" then exact[c.name:lower()] = true end
+        for _, alias in ipairs(c.aliases or {}) do
+            if alias ~= "" then exact[alias:lower()] = true end
+        end
+    end
+
+    local changed = false
+    for _, entry in ipairs(entries) do
+        if entry.known_connections then
+            local new_conns = {}
+            for _, conn in ipairs(entry.known_connections) do
+                local name_part, rel_part = conn:match("^(.-)%s*%((.-)%)%s*$")
+                if name_part and rel_part then
+                    name_part = name_part:match("^%s*(.-)%s*$")
+                    local name_lower = name_part:lower()
+                    if exact[name_lower] then
+                        -- Already a full known name — leave unchanged
+                        table.insert(new_conns, conn)
+                    else
+                        -- Find characters whose full name starts with name_part (word boundary)
+                        local candidates = {}
+                        for _, c in ipairs(characters) do
+                            local full_lower = (c.name or ""):lower()
+                            if isPartialPrefix(name_lower, full_lower) then
+                                local dup = false
+                                for _, existing in ipairs(candidates) do
+                                    if existing == c.name then dup = true; break end
+                                end
+                                if not dup then table.insert(candidates, c.name) end
+                            end
+                        end
+                        if #candidates == 1 then
+                            table.insert(new_conns, candidates[1] .. " (" .. rel_part .. ")")
+                            changed = true
+                        else
+                            table.insert(new_conns, conn)
+                        end
+                    end
+                else
+                    table.insert(new_conns, conn)
+                end
+            end
+            entry.known_connections = new_conns
+        end
+    end
+
+    if changed then self:save(book_md5, entries) end
+end
+
 return CodexDB

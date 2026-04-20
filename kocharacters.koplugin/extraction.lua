@@ -584,7 +584,9 @@ function Extraction:_processCharacterJob(job, book_id)
             if #resolved > 0 then
                 self_ref.db:merge(book_ref, resolved, page_ref)
             end
-            self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found")
+            local _names = {}
+            for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
+            self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
             self_ref:showExtractedCount(#characters, page_ref)
             self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
                 self_ref:_checkAndPromptPendingPages(book_ref)
@@ -715,8 +717,11 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         self_ref._codex_pending[pageno] = nil
         if updated and #updated > 0 then
             self_ref.db_codex:merge(book_id, updated, pageno)
+            self_ref.db_codex:normalizeConnections(book_id, self_ref.db:load(book_id))
             self_ref:showCodexExtractedCount(#updated, pageno)
-            self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated")
+            local _names = {}
+            for _, e in ipairs(updated) do table.insert(_names, e.name or "?") end
+            self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated (" .. table.concat(_names, ", ") .. ")")
         end
         self_ref:_drainCodexPending()
         if on_done then on_done() end
@@ -966,6 +971,9 @@ function Extraction:onScanPendingPages(book_id)
             if #remaining_chars > 0 then self_ref.db:merge(book_id, remaining_chars, page_num) end
             total_found = total_found + #characters
             table.insert(scanned_ok, page_num)
+            local _names = {}
+            for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
+            self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
         else
             table.insert(scanned_ok, page_num)
         end
@@ -1061,7 +1069,9 @@ function Extraction:onExtractCurrentPage()
             if #resolved > 0 then
                 self_ref.db:merge(book_id, resolved, cur_page)
             end
-            self_ref._append_log(book_id, "Manual extract p." .. cur_page .. ": " .. #characters .. " character(s) found")
+            local _names = {}
+            for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
+            self_ref._append_log(book_id, "Manual extract p." .. cur_page .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
             self_ref:_checkAndPromptPendingPages(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
