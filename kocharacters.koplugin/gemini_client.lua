@@ -293,6 +293,31 @@ function GeminiClient:new(api_key)
     return setmetatable({ api_key = api_key }, self)
 end
 
+-- Extract text content from a parsed Gemini response envelope; returns text or nil, err
+local function extractCandidateText(parsed)
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then
+        local reason = parsed.candidates and parsed.candidates[1]
+            and parsed.candidates[1].finishReason or "unknown"
+        return nil, "Gemini returned no text content. Finish reason: " .. reason
+    end
+    return text
+end
+
+-- Strip markdown code fences Gemini sometimes adds despite instructions
+local function stripCodeFences(text)
+    -- Remove ```json ... ``` or ``` ... ```
+    local stripped = text:match("```json%s*(.-)%s*```")
+        or text:match("```%s*(.-)%s*```")
+        or text
+    return stripped:match("^%s*(.-)%s*$")  -- trim whitespace
+end
+
 -- Returns true if err is a transient API or network error worth retrying
 function GeminiClient.isRetryableError(err)
     if type(err) ~= "string" then return false end
@@ -357,31 +382,6 @@ function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, te
     tmpl = sub(tmpl, "{{text}}",         page_text)
     tmpl = sub(tmpl, "{{book_context}}", ctx_str)
     return tmpl
-end
-
--- Extract text content from a parsed Gemini response envelope; returns text or nil, err
-local function extractCandidateText(parsed)
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text content. Finish reason: " .. reason
-    end
-    return text
-end
-
--- Strip markdown code fences Gemini sometimes adds despite instructions
-local function stripCodeFences(text)
-    -- Remove ```json ... ``` or ``` ... ```
-    local stripped = text:match("```json%s*(.-)%s*```")
-        or text:match("```%s*(.-)%s*```")
-        or text
-    return stripped:match("^%s*(.-)%s*$")  -- trim whitespace
 end
 
 -- Parse a raw Gemini response body string; returns characters, nil, usage, book_context or nil, err
