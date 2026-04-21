@@ -289,6 +289,13 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
                     end,
                 },
                 {
+                    text = "Clean up",
+                    callback = function()
+                        close_fn()
+                        UICodex.onCleanupEntry(plugin, book_id, entry, refresh_browser_fn)
+                    end,
+                },
+                {
                     text = "Delete",
                     callback = function()
                         close_fn()
@@ -657,6 +664,60 @@ function UICodex.showBrowser(plugin, type_filter)
         show_parent = plugin.ui,
     }
     UIManager:show(browser_menu)
+end
+
+-- ---------------------------------------------------------------------------
+-- Cleanup a single codex entry
+-- ---------------------------------------------------------------------------
+
+function UICodex.onCleanupEntry(plugin, book_id, entry, refresh_browser_fn)
+    local api_key = plugin:getApiKey()
+    if api_key == "" then
+        plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local name = entry.name or "Unknown"
+    local msg = InfoMessage:new{ text = 'Cleaning up "' .. name .. '"...' }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local cleaned, err, usage
+    local ok, call_err = pcall(function()
+        cleaned, err, usage = client:cleanCodexEntries({ entry }, plugin:getCodexCleanupPrompt())
+    end)
+    UIManager:close(msg)
+
+    if not ok then
+        plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+        return
+    end
+    if err then
+        plugin:showMsg("Gemini error:\n" .. tostring(err), 8)
+        return
+    end
+
+    if cleaned and type(cleaned) == "table" and cleaned[1] then
+        plugin:recordUsage(usage)
+        local cc = cleaned[1]
+        local all_entries = plugin.db_codex:load(book_id)
+        for _, orig in ipairs(all_entries) do
+            if orig.name == name then
+                if cc.description       ~= nil then orig.description       = cc.description       end
+                if cc.significance      ~= nil then orig.significance      = cc.significance      end
+                if type(cc.known_connections) == "table" then orig.known_connections = cc.known_connections end
+                if type(cc.aliases)      == "table" then orig.aliases      = cc.aliases           end
+                break
+            end
+        end
+        plugin.db_codex:save(book_id, all_entries)
+        plugin.db_codex:normalizeConnections(book_id, plugin.db:load(book_id))
+    end
+
+    plugin:showMsg('"' .. name .. '" cleaned up.', 3)
+    local fresh = plugin.db_codex:findByName(book_id, name)
+    UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
 end
 
 -- ---------------------------------------------------------------------------

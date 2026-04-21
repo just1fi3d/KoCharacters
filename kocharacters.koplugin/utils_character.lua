@@ -227,10 +227,11 @@ function UtilsCharacter.formatText(c)
         table.insert(lines, c.user_notes)
     end
 
-    if c.source_page then
+    local display_page = c.last_seen_page or c.source_page
+    if display_page then
         table.insert(lines, "")
-        table.insert(lines, "LAST UPDATED")
-        table.insert(lines, "Page " .. c.source_page)
+        table.insert(lines, "LAST SEEN")
+        table.insert(lines, "Page " .. display_page)
     end
 
     return table.concat(lines, "\n")
@@ -444,8 +445,9 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w, opts)
         p[#p+1] = '<div class="section"><div class="label">My notes</div>'
             .. '<p style="white-space:pre-wrap;">' .. esc(char.user_notes) .. '</p></div>'
     end
-    if char.source_page then
-        p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(char.source_page) .. '</p>'
+    local display_page = char.last_seen_page or char.source_page
+    if display_page then
+        p[#p+1] = '<p class="foot">Last seen: page ' .. tostring(display_page) .. '</p>'
     end
 
     return css, table.concat(p)

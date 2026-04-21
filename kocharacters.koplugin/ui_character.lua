@@ -788,10 +788,12 @@ function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
 
     -- Character items
     for _, c in ipairs(sorted) do
-        local name    = c.name or "Unknown"
-        local role    = (c.role and c.role ~= "" and c.role ~= "unknown")
-                        and (" [" .. c.role .. "]") or ""
-        local cleanup = c.needs_cleanup and " *" or ""
+        local name      = c.name or "Unknown"
+        local role      = (c.role and c.role ~= "" and c.role ~= "unknown")
+                          and (" [" .. c.role .. "]") or ""
+        local cleanup   = c.needs_cleanup and " *" or ""
+        local last_page = c.last_seen_page or c.source_page
+        local page_str  = last_page and (" · p." .. last_page) or ""
         local char = c
         if c._spoiler then
             local real_name = c._real_name
@@ -817,7 +819,7 @@ function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
             })
         else
         table.insert(items, {
-            text     = name .. role .. cleanup,
+            text     = name .. role .. page_str .. cleanup,
             callback = function()
                 if not char.unlocked then
                     char.unlocked = true

@@ -129,11 +129,12 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 if first_seen                        then existing[idx].first_seen_page      = first_seen  end
                 if first_quote and first_quote ~= "" then existing[idx].first_appearance_quote = first_quote end
                 if page_num                          then existing[idx].source_page          = page_num    end
+                if page_num                          then existing[idx].last_seen_page       = page_num    end
                 existing[idx].defining_moments = UtilsCharacter.unionArrays(prev_moments, existing[idx].defining_moments)
                 changed = true
             else
                 c.id = generateId()
-                if page_num then c.source_page = page_num; c.first_seen_page = page_num end
+                if page_num then c.source_page = page_num; c.first_seen_page = page_num; c.last_seen_page = page_num end
                 table.insert(existing, c)
                 name_to_idx[c.name:lower()] = #existing
                 added = added + 1
@@ -292,7 +293,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             if (not c.first_appearance_quote or c.first_appearance_quote == "") and extra.first_appearance_quote then
                 c.first_appearance_quote = extra.first_appearance_quote
             end
-            if page_num then c.source_page = page_num end
+            if page_num then c.source_page = page_num; c.last_seen_page = page_num end
             c.needs_cleanup = true
 
             local ok, err = self:save(book_md5, characters)
