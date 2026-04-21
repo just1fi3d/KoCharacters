@@ -85,6 +85,25 @@ function UIShared.showHtmlViewer(opts)
     return true
 end
 
+-- Wraps a Gemini API call in pcall, closes an optional progress message, records usage,
+-- and shows a toast on failure. fn is a zero-arg closure that calls the API and returns
+-- result, err, usage[, extra]. Returns result, usage, extra on success; nil on error.
+function UIShared.callApi(plugin, fn, working_msg)
+    local r1, r2, r3, r4
+    local ok, call_err = pcall(function() r1, r2, r3, r4 = fn() end)
+    if working_msg then UIManager:close(working_msg) end
+    if ok and not r2 then plugin:recordUsage(r3) end
+    if not ok then
+        plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
+        return nil
+    end
+    if r2 then
+        plugin:showMsg("Gemini error:\n" .. tostring(r2), 8)
+        return nil
+    end
+    return r1, r3, r4
+end
+
 -- Show a simple single-field text edit dialog.
 -- on_save(value) is called with the raw input text on save.
 function UIShared.editTextField(label, current, multiline, on_save)

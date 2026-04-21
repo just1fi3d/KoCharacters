@@ -1,27 +1,16 @@
 -- db_codex.lua
 -- Manages per-book codex storage using JSON files alongside characters.json
 
-local json        = require("dkjson")
-local DataStorage = require("datastorage")
-local util        = require("util")
-local logger      = require("logger")
+local json           = require("dkjson")
+local DataStorage    = require("datastorage")
+local util           = require("util")
+local logger         = require("logger")
+local UtilsCharacter = require("utils_character")
 
 local _id_seq = 0
 local function generateId()
     _id_seq = _id_seq + 1
     return tostring(os.time()) .. "_" .. tostring(_id_seq)
-end
-
-local function unionArrays(a, b)
-    local seen = {}
-    local result = {}
-    for _, v in ipairs(a or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    for _, v in ipairs(b or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    return result
 end
 
 local CodexDB = {}
@@ -98,8 +87,8 @@ function CodexDB:merge(book_md5, new_entries, page_num)
                 e.first_appearance_quote = (ex.first_appearance_quote and ex.first_appearance_quote ~= "")
                                            and ex.first_appearance_quote
                                            or e.first_appearance_quote
-                e.aliases              = unionArrays(ex.aliases, e.aliases)
-                e.known_connections    = unionArrays(ex.known_connections, e.known_connections)
+                e.aliases              = UtilsCharacter.unionArrays(ex.aliases, e.aliases)
+                e.known_connections    = UtilsCharacter.unionArrays(ex.known_connections, e.known_connections)
                 if page_num then e.source_page = page_num end
                 existing[idx] = e
                 changed = true

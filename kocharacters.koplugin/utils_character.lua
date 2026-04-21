@@ -5,6 +5,41 @@
 local UtilsCharacter = {}
 
 -- ---------------------------------------------------------------------------
+-- Array / set utilities
+-- ---------------------------------------------------------------------------
+
+-- Union two arrays of strings, preserving order and deduplicating by value.
+function UtilsCharacter.unionArrays(a, b)
+    local seen = {}
+    local result = {}
+    for _, v in ipairs(a or {}) do
+        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
+    end
+    for _, v in ipairs(b or {}) do
+        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
+    end
+    return result
+end
+
+-- Find a character in a list by partial name or alias match (bidirectional substring).
+-- target_lower must already be lowercased.
+function UtilsCharacter.findByPartialName(characters, target_lower)
+    for _, c in ipairs(characters) do
+        local cname = (c.name or ""):lower()
+        if cname:find(target_lower, 1, true) or target_lower:find(cname, 1, true) then
+            return c
+        end
+        for _, alias in ipairs(c.aliases or {}) do
+            local al = alias:lower()
+            if al:find(target_lower, 1, true) or target_lower:find(al, 1, true) then
+                return c
+            end
+        end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
 -- Duplicate detection
 -- ---------------------------------------------------------------------------
 
