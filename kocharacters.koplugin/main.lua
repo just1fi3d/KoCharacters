@@ -274,101 +274,47 @@ function KoCharacters:onScanPendingPages(book_id)
 end
 
 function KoCharacters:addToMainMenu(menu_items)
+    -- Numeric entries populate the tab's item list directly.
+    -- No "text" key: keeps MenuSorter from treating this as an orphan item.
+    -- The icon is picked up from this table by TouchMenu when rendering the tab bar.
+    local self_ref = self
     menu_items.ko_characters = {
-        text_func = function()
-            local book_id = self:getBookID()
-            local n = book_id and #self.db:load(book_id) or 0
-            local base = n == 0 and _("KoCharacters") or (_("KoCharacters") .. " (" .. n .. ")")
-            if book_id and self.db:hasPendingCleanup(book_id) then
-                base = base .. " — cleanup needed"
-            end
-            return base
-        end,
-        sub_item_table = {
-            {
-                text     = _("Extract characters from this page"),
-                callback = function() self.extraction:onExtractCurrentPage() end,
-            },
-            {
-                text     = _("Extract codex entries from this page"),
-                callback = function() self:onEnrichCodexFromPage() end,
-            },
-            {
-                text     = _("Scan current chapter"),
-                callback = function() self.extraction:onScanChapter() end,
-            },
-            {
-                text     = _("Scan specific chapter"),
-                callback = function() self.extraction:onScanSpecificChapter() end,
-            },
-            {
-                text     = _("View saved characters"),
-                callback = function() self:onViewCharacters() end,
-            },
-            {
-                text     = _("View saved codex entries"),
-                callback = function() UICodex.showBrowser(self) end,
-            },
-            {
-                text     = _("Re-analyze character"),
-                callback = function() self:onReanalyzeCharacterPicker() end,
-            },
-            {
-                text     = _("View relationship map"),
-                callback = function() self:onViewRelationshipMap() end,
-            },
-            {
-                text     = _("Cleanup all characters"),
-                callback = function() self:onCleanupAllCharacters() end,
-            },
-            {
-                text     = _("Cleanup all codex entries"),
-                callback = function() self:onCleanupAllCodexEntries() end,
-            },
-            {
-                text     = _("Detect & merge duplicates"),
-                callback = function() self:onMergeDetection() end,
-            },
-            {
-                text     = _("Generate portraits"),
-                callback = function() Portrait.batchGenerate(self) end,
-            },
-            {
-                text     = _("Export..."),
-                callback = function()
-                    local self_ref = self
-                    local export_menu
-                    export_menu = Menu:new{
-                        title      = "Export",
-                        item_table = {
-                            {
-                                text     = "Export character list",
-                                callback = function() UIManager:close(export_menu); Export.exportList(self_ref) end,
-                            },
-                            {
-                                text     = "Export as ZIP (HTML + portraits)",
-                                callback = function() UIManager:close(export_menu); Export.exportZip(self_ref) end,
-                            },
-                            {
-                                text     = "Upload to server",
-                                callback = function() UIManager:close(export_menu); Export.uploadToServer(self_ref) end,
-                            },
-                        },
-                        width       = Screen:getWidth(),
-                        show_parent = self.ui,
-                    }
-                    UIManager:show(export_menu)
-                end,
-            },
-            {
-                text     = _("Activity log"),
-                callback = function() self:onViewActivityLog() end,
-            },
-            {
-                text     = _("Settings..."),
-                callback = function() UISettings.open(self) end,
-            },
+        icon = "appbar.kocharacters",
+        -- Extract
+        { text = _("Extract characters from this page"),    callback = function() self_ref.extraction:onExtractCurrentPage() end },
+        { text = _("Extract codex entries from this page"), callback = function() self_ref:onEnrichCodexFromPage() end },
+        { text = _("Scan current chapter"),                 callback = function() self_ref.extraction:onScanChapter() end },
+        { text = _("Scan specific chapter"),                callback = function() self_ref.extraction:onScanSpecificChapter() end, separator = true },
+        -- View
+        { text = _("View saved characters"),   callback = function() self_ref:onViewCharacters() end },
+        { text = _("View saved codex entries"), callback = function() UICodex.showBrowser(self_ref) end },
+        { text = _("View relationship map"),   callback = function() self_ref:onViewRelationshipMap() end, separator = true },
+        -- Manage
+        { text = _("Re-analyze character"),       callback = function() self_ref:onReanalyzeCharacterPicker() end },
+        { text = _("Detect & merge duplicates"),  callback = function() self_ref:onMergeDetection() end },
+        { text = _("Cleanup all characters"),     callback = function() self_ref:onCleanupAllCharacters() end },
+        { text = _("Cleanup all codex entries"),  callback = function() self_ref:onCleanupAllCodexEntries() end },
+        { text = _("Generate portraits"),         callback = function() Portrait.batchGenerate(self_ref) end, separator = true },
+        -- Export / misc
+        {
+            text     = _("Export..."),
+            callback = function()
+                local export_menu
+                export_menu = Menu:new{
+                    title      = "Export",
+                    item_table = {
+                        { text = "Export character list",          callback = function() UIManager:close(export_menu); Export.exportList(self_ref) end },
+                        { text = "Export as ZIP (HTML + portraits)", callback = function() UIManager:close(export_menu); Export.exportZip(self_ref) end },
+                        { text = "Upload to server",               callback = function() UIManager:close(export_menu); Export.uploadToServer(self_ref) end },
+                    },
+                    width       = Screen:getWidth(),
+                    show_parent = self_ref.ui,
+                }
+                UIManager:show(export_menu)
+            end,
         },
+        { text = _("Activity log"), callback = function() self_ref:onViewActivityLog() end },
+        { text = _("Settings..."), callback = function() UISettings.open(self_ref) end },
     }
 end
 
