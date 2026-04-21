@@ -79,10 +79,63 @@ function KoCharacters:onCharReanalyze()        self:onReanalyzeCharacterPicker()
 function KoCharacters:onCharViewUsage()        self:onViewUsage() end
 function KoCharacters:onCharRelationshipMap()  self:onViewRelationshipMap() end
 
+function KoCharacters:setupResources()
+    local DataStorage = require("datastorage")
+    local lfs         = require("libs/libkoreader-lfs")
+    local util        = require("util")
+    local data_dir    = DataStorage:getDataDir()
+
+    -- Copy the bundled tab-bar icon to the user icons dir so IconWidget finds it.
+    local icon_dest = data_dir .. "/icons/appbar.kocharacters.svg"
+    if lfs.attributes(icon_dest, "mode") ~= "file" then
+        local icon_src = data_dir .. "/plugins/kocharacters.koplugin/appbar.kocharacters.svg"
+        local rf = io.open(icon_src, "r")
+        if rf then
+            local content = rf:read("*a"); rf:close()
+            util.makePath(data_dir .. "/icons")
+            local wf = io.open(icon_dest, "w")
+            if wf then wf:write(content); wf:close() end
+        end
+    end
+
+    -- Write reader_menu_order.lua if ko_characters is not already registered there.
+    local order_path = DataStorage:getSettingsDir() .. "/reader_menu_order.lua"
+    local needs_write = true
+    if lfs.attributes(order_path, "mode") == "file" then
+        local ok, existing = pcall(dofile, order_path)
+        if ok and type(existing) == "table" then
+            local buttons = existing["KOMenu:menu_buttons"]
+            if type(buttons) == "table" then
+                for _, v in ipairs(buttons) do
+                    if v == "ko_characters" then needs_write = false; break end
+                end
+            end
+        end
+        if needs_write then
+            -- Order file exists with different customisations — don't overwrite.
+            logger.warn("KoCharacters: reader_menu_order.lua exists but ko_characters missing; add it to KOMenu:menu_buttons manually for the tab icon")
+            needs_write = false
+        end
+    end
+    if needs_write then
+        local f = io.open(order_path, "w")
+        if f then
+            f:write('return {\n')
+            f:write('    ["KOMenu:menu_buttons"] = {\n')
+            f:write('        "navi", "typeset", "setting", "tools", "search", "filemanager", "ko_characters", "main",\n')
+            f:write('    },\n')
+            f:write('    ko_characters = {},\n')
+            f:write('}\n')
+            f:close()
+        end
+    end
+end
+
 function KoCharacters:init()
     self.db       = DBCharacter
     self.db_codex = DBCodex
     self:onDispatcherRegisterActions()
+    self:setupResources()
     self.ui.menu:registerToMainMenu(self)
 
     -- Clean up any stale async temp files left by a previous crash/restart.
