@@ -9,9 +9,10 @@ local Menu        = require("ui/widget/menu")
 local Screen      = require("device").screen
 local _           = require("gettext")
 
-local GeminiClient = require("gemini_client")
-local Portrait     = require("portrait")
-local UIShared     = require("ui_shared")
+local GeminiClient   = require("gemini_client")
+local Portrait       = require("portrait")
+local UIShared       = require("ui_shared")
+local UtilsCharacter = require("utils_character")
 
 local UICodex = {}
 
@@ -352,20 +353,7 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
 
         if scheme == "entity" or scheme == "char" then
             local UICharacter = require("ui_character")
-            local found_char
-            for _, c in ipairs(plugin.db:load(book_id)) do
-                local cname = (c.name or ""):lower()
-                if cname:find(target_lower, 1, true) or target_lower:find(cname, 1, true) then
-                    found_char = c; break
-                end
-                for _, alias in ipairs(c.aliases or {}) do
-                    local al = alias:lower()
-                    if al:find(target_lower, 1, true) or target_lower:find(al, 1, true) then
-                        found_char = c; break
-                    end
-                end
-                if found_char then break end
-            end
+            local found_char = UtilsCharacter.findByPartialName(plugin.db:load(book_id), target_lower)
             if found_char then
                 if viewer_close.close then viewer_close.close() end
                 UIManager:scheduleIn(0.15, function()

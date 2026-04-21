@@ -18,6 +18,18 @@ local Portrait         = require("portrait")
 
 local UICharacter = {}
 
+local function toSlimChar(c)
+    return {
+        name                 = c.name,
+        aliases              = c.aliases,
+        physical_description = c.physical_description,
+        personality          = c.personality,
+        role                 = c.role,
+        occupation           = c.occupation,
+        relationships        = c.relationships,
+    }
+end
+
 -- ---------------------------------------------------------------------------
 -- Duplicate detection helpers (also called from extraction.lua via DI)
 -- ---------------------------------------------------------------------------
@@ -591,20 +603,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
             local target_lower = target:lower()
 
             if scheme == "char" then
-                local found
-                for _, c in ipairs(plugin.db:load(book_id)) do
-                    local cname = (c.name or ""):lower()
-                    if cname:find(target_lower, 1, true) or target_lower:find(cname, 1, true) then
-                        found = c; break
-                    end
-                    for _, alias in ipairs(c.aliases or {}) do
-                        local al = alias:lower()
-                        if al:find(target_lower, 1, true) or target_lower:find(al, 1, true) then
-                            found = c; break
-                        end
-                    end
-                    if found then break end
-                end
+                local found = UtilsCharacter.findByPartialName(plugin.db:load(book_id), target_lower)
                 if found then
                     UIManager:scheduleIn(0.15, function()
                         UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
@@ -888,21 +887,10 @@ function UICharacter.onCleanupAllCharacters(plugin)
             UIManager:show(working_msg)
             UIManager:forceRePaint()
 
-            local cleaned, err, usage
-            local ok, call_err = pcall(function()
-                cleaned, err, usage = client:cleanCharacters(batch, plugin:getCharactersCleanupPrompt())
-            end)
-            UIManager:close(working_msg)
-            if ok and not err then plugin:recordUsage(usage) end
-
-            if not ok then
-                plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-                return
-            end
-            if err then
-                plugin:showMsg("Gemini error:\n" .. tostring(err), 8)
-                return
-            end
+            local cleaned = UIShared.callApi(plugin, function()
+                return client:cleanCharacters(batch, plugin:getCharactersCleanupPrompt())
+            end, working_msg)
+            if not cleaned then return end
 
             if cleaned and type(cleaned) == "table" then
                 for idx, cc in ipairs(cleaned) do
@@ -1019,34 +1007,13 @@ function UICharacter.onMergeDetection(plugin)
     UIManager:forceRePaint()
 
     local slim_chars = {}
-    for _, c in ipairs(all_chars) do
-        table.insert(slim_chars, {
-            name                 = c.name,
-            aliases              = c.aliases,
-            physical_description = c.physical_description,
-            personality          = c.personality,
-            role                 = c.role,
-            occupation           = c.occupation,
-            relationships        = c.relationships,
-        })
-    end
+    for _, c in ipairs(all_chars) do table.insert(slim_chars, toSlimChar(c)) end
 
     local client = GeminiClient:new(api_key)
-    local groups, derr, dusage
-    local dok, dcall_err = pcall(function()
-        groups, derr, dusage = client:detectMergeGroups(slim_chars, plugin:getMergeDetectionPrompt())
-    end)
-    UIManager:close(detect_msg)
-    if dok and not derr then plugin:recordUsage(dusage) end
-
-    if not dok then
-        plugin:showMsg("Plugin error:\n" .. tostring(dcall_err), 8)
-        return
-    end
-    if derr then
-        plugin:showMsg("Gemini error:\n" .. tostring(derr), 8)
-        return
-    end
+    local groups = UIShared.callApi(plugin, function()
+        return client:detectMergeGroups(slim_chars, plugin:getMergeDetectionPrompt())
+    end, detect_msg)
+    if not groups then return end
     if not groups or #groups == 0 then
         plugin:showMsg("No duplicate characters detected.", 4)
         return
@@ -1134,20 +1101,7 @@ function UICharacter.onDetectUnnamedMatches(plugin, book_id, on_done)
 
     local unnamed, named = {}, {}
     for _, c in ipairs(all_chars) do
-        local slim = {
-            name                 = c.name,
-            aliases              = c.aliases,
-            physical_description = c.physical_description,
-            personality          = c.personality,
-            role                 = c.role,
-            occupation           = c.occupation,
-            relationships        = c.relationships,
-        }
-        if c.name:match("^Unnamed") then
-            table.insert(unnamed, slim)
-        else
-            table.insert(named, slim)
-        end
+        table.insert(c.name:match("^Unnamed") and unnamed or named, toSlimChar(c))
     end
 
     if #unnamed == 0 then
@@ -1276,23 +1230,10 @@ function UICharacter.onReanalyzeCharacter(plugin, book_id, char)
     UIManager:forceRePaint()
 
     local client = GeminiClient:new(api_key)
-    local characters, api_err, usage
-    local ok, call_err = pcall(function()
-        characters, api_err, usage = client:reanalyzeCharacter(
-            page_text, char, plugin:getReanalyzePrompt())
-    end)
-
-    UIManager:close(working_msg)
-    if ok and not api_err then plugin:recordUsage(usage) end
-
-    if not ok then
-        plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-        return
-    end
-    if api_err then
-        plugin:showMsg("Gemini error:\n" .. tostring(api_err), 8)
-        return
-    end
+    local characters = UIShared.callApi(plugin, function()
+        return client:reanalyzeCharacter(page_text, char, plugin:getReanalyzePrompt())
+    end, working_msg)
+    if not characters then return end
     if not characters or #characters == 0 then
         plugin:showMsg('"' .. char.name .. '" was not found on this page.', 4)
         return
@@ -1358,16 +1299,10 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     UIManager:forceRePaint()
 
     local client = GeminiClient:new(api_key)
-    local result, err, usage
-    local ok, call_err = pcall(function()
-        result, err, usage = client:cleanCharacter(char, plugin:getCleanupPrompt())
-    end)
-
-    UIManager:close(working_msg)
-    if ok and not err then plugin:recordUsage(usage) end
-
-    if not ok then plugin:showMsg("Error:\n" .. tostring(call_err), 6); return end
-    if err    then plugin:showMsg("Gemini error:\n" .. tostring(err), 6); return end
+    local result = UIShared.callApi(plugin, function()
+        return client:cleanCharacter(char, plugin:getCleanupPrompt())
+    end, working_msg)
+    if not result then return end
 
     local new_name = result.name
     if new_name and new_name ~= "" and new_name ~= char.name then

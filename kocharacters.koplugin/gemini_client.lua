@@ -293,6 +293,75 @@ function GeminiClient:new(api_key)
     return setmetatable({ api_key = api_key }, self)
 end
 
+-- Extract text content from a parsed Gemini response envelope; returns text or nil, err
+local function extractCandidateText(parsed)
+    local text = parsed.candidates
+        and parsed.candidates[1]
+        and parsed.candidates[1].content
+        and parsed.candidates[1].content.parts
+        and parsed.candidates[1].content.parts[1]
+        and parsed.candidates[1].content.parts[1].text
+    if not text or text == "" then
+        local reason = parsed.candidates and parsed.candidates[1]
+            and parsed.candidates[1].finishReason or "unknown"
+        return nil, "Gemini returned no text content. Finish reason: " .. reason
+    end
+    return text
+end
+
+-- Strip markdown code fences Gemini sometimes adds despite instructions
+local function stripCodeFences(text)
+    -- Remove ```json ... ``` or ``` ... ```
+    local stripped = text:match("```json%s*(.-)%s*```")
+        or text:match("```%s*(.-)%s*```")
+        or text
+    return stripped:match("^%s*(.-)%s*$")  -- trim whitespace
+end
+
+-- Returns true if err is a transient API or network error worth retrying
+function GeminiClient.isRetryableError(err)
+    if type(err) ~= "string" then return false end
+    return err:find("Network error") ~= nil
+        or err:find("503")          ~= nil
+        or err:find("429")          ~= nil
+        or err:find("quota")        ~= nil
+        or err:find("high demand")  ~= nil
+        or err:find("overload")     ~= nil
+end
+
+-- POST prompt to Gemini; returns stripped candidate text, err, usage
+function GeminiClient:_post(prompt, temperature, max_tokens)
+    local request_body = json.encode({
+        contents         = {{ parts = {{ text = prompt }} }},
+        generationConfig = {
+            temperature     = temperature or 0.2,
+            maxOutputTokens = max_tokens  or 8192,
+        },
+    })
+    local response_body = {}
+    local ok, status = https.request({
+        url    = API_BASE .. "?key=" .. self.api_key,
+        method = "POST",
+        headers = {
+            ["Content-Type"]   = "application/json",
+            ["Content-Length"] = tostring(#request_body),
+        },
+        source = ltn12.source.string(request_body),
+        sink   = ltn12.sink.table(response_body),
+    })
+    if not ok then return nil, "Network error: " .. tostring(status) end
+    local raw    = table.concat(response_body)
+    local parsed = json.decode(raw)
+    if not parsed then return nil, "Failed to parse Gemini response" end
+    if status ~= 200 then
+        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
+        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    end
+    local text, err = extractCandidateText(parsed)
+    if not text then return nil, err end
+    return stripCodeFences(text), nil, extractUsage(parsed)
+end
+
 -- Build the extraction prompt
 function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, template, book_context)
     local skip_str = "none"
@@ -315,15 +384,6 @@ function GeminiClient:buildPrompt(page_text, skip_names, existing_characters, te
     return tmpl
 end
 
--- Strip markdown code fences Gemini sometimes adds despite instructions
-local function stripCodeFences(text)
-    -- Remove ```json ... ``` or ``` ... ```
-    local stripped = text:match("```json%s*(.-)%s*```")
-        or text:match("```%s*(.-)%s*```")
-        or text
-    return stripped:match("^%s*(.-)%s*$")  -- trim whitespace
-end
-
 -- Parse a raw Gemini response body string; returns characters, nil, usage, book_context or nil, err
 function GeminiClient:_parseResponseBody(raw)
     local parsed, _, err = json.decode(raw)
@@ -337,24 +397,8 @@ function GeminiClient:_parseResponseBody(raw)
         return nil, "API error (HTTP " .. tostring(status_code) .. "): " .. detail
     end
 
-    -- Navigate to the text content
-    -- Structure: parsed.candidates[1].content.parts[1].text
-    local text
-    if parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1] then
-        text = parsed.candidates[1].content.parts[1].text
-    end
-
-    if not text or text == "" then
-        local reason = parsed.candidates
-            and parsed.candidates[1]
-            and parsed.candidates[1].finishReason
-            or "unknown"
-        return nil, "Gemini returned no text content. Finish reason: " .. reason
-    end
+    local text, text_err = extractCandidateText(parsed)
+    if not text then return nil, text_err end
 
     text = stripCodeFences(text)
 
@@ -441,18 +485,8 @@ function GeminiClient:parseCodexResponseFile(path)
         return nil, "API error (HTTP " .. tostring(parsed.error.code or "?") .. "): " .. detail
     end
 
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
+    local text, text_err = extractCandidateText(parsed)
+    if not text then return nil, text_err end
     text = stripCodeFences(text)
     local result, _, jerr = json.decode(text)
     if not result then
@@ -496,18 +530,8 @@ function GeminiClient:parseCodexCreateResponseFile(path)
         return nil, "API error (HTTP " .. tostring(parsed.error.code or "?") .. "): " .. detail
     end
 
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
+    local text, text_err = extractCandidateText(parsed)
+    if not text then return nil, text_err end
     text = stripCodeFences(text)
     local entry, _, jerr = json.decode(text)
     if not entry then
@@ -529,51 +553,24 @@ function GeminiClient:extractCharacters(page_text, skip_names, existing_characte
     if not self.api_key or self.api_key == "" then
         return nil, "API key is not set. Please configure it in the plugin settings."
     end
-
     local prompt = self:buildPrompt(page_text, skip_names, existing_characters, extraction_prompt, book_context)
-
-    -- Gemini request body
-    local request_body = json.encode({
-        contents = {
-            {
-                parts = {
-                    { text = prompt }
-                }
-            }
-        },
-        generationConfig = {
-            temperature     = 0.2,
-            maxOutputTokens = 8192,
-        }
-    })
-
-    local response_body = {}
-    local url = API_BASE .. "?key=" .. self.api_key
-
-    local ok, status = https.request({
-        url    = url,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then
-        return nil, "Network error: " .. tostring(status)
+    local text, err, usage = self:_post(prompt, 0.2, 8192)
+    if not text then return nil, err end
+    local result, _, jerr = json.decode(text)
+    if not result then
+        return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
     end
-
-    if status ~= 200 then
-        -- Try to extract a helpful error message from the response body
-        local raw = table.concat(response_body)
-        local parsed = json.decode(raw)
-        local detail = parsed and parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
+    local characters, book_ctx
+    if type(result) == "table" and result.characters then
+        characters = result.characters
+        book_ctx   = result.book_context
+    elseif type(result) == "table" then
+        characters = result
+    else
+        return nil, "Expected a JSON object or array, got: " .. type(result)
     end
-
-    return self:_parseResponseBody(table.concat(response_body))
+    if type(characters) ~= "table" then characters = {} end
+    return characters, nil, usage, book_ctx
 end
 
 -- Re-analyze a single known character against a new page passage
@@ -581,51 +578,11 @@ function GeminiClient:reanalyzeCharacter(page_text, char, reanalyze_prompt)
     if not self.api_key or self.api_key == "" then
         return nil, "API key is not set. Please configure it in the plugin settings."
     end
-
-    local tmpl = reanalyze_prompt or GeminiClient.DEFAULT_REANALYZE_PROMPT
+    local tmpl   = reanalyze_prompt or GeminiClient.DEFAULT_REANALYZE_PROMPT
     local prompt = sub(tmpl, "{{character}}", json.encode(char))
-    prompt = sub(prompt, "{{text}}", page_text)
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url    = API_BASE .. "?key=" .. self.api_key,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse Gemini response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
-    text = stripCodeFences(text)
+    prompt       = sub(prompt, "{{text}}", page_text)
+    local text, err, usage = self:_post(prompt, 0.2, 8192)
+    if not text then return nil, err end
     local characters, _, jerr = json.decode(text)
     if not characters then
         return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
@@ -633,7 +590,7 @@ function GeminiClient:reanalyzeCharacter(page_text, char, reanalyze_prompt)
     if type(characters) ~= "table" then
         return nil, "Expected a JSON array, got: " .. type(characters)
     end
-    return characters, nil, extractUsage(parsed)
+    return characters, nil, usage
 end
 
 GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT = [[
@@ -680,46 +637,13 @@ function GeminiClient:cleanCharacters(characters, prompt_template)
         return nil, "API key is not set."
     end
     if not characters or #characters == 0 then return {}, nil end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_CHARACTERS_CLEANUP_PROMPT
     local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url     = API_BASE .. "?key=" .. self.api_key,
-        method  = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then return nil, "Gemini returned no text" end
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.1, 8192)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 function GeminiClient:cleanCodexEntries(entries, prompt_template)
@@ -727,50 +651,14 @@ function GeminiClient:cleanCodexEntries(entries, prompt_template)
         return nil, "API key is not set."
     end
     if not entries or #entries == 0 then return {}, nil end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT
     local prompt = sub(tmpl, "{{entries}}", json.encode(entries))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url     = API_BASE .. "?key=" .. self.api_key,
-        method  = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then return nil, "Gemini returned no text" end
-
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.1, 8192)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
     if type(result) ~= "table" then return nil, "Expected a JSON array" end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT = [[
@@ -798,46 +686,13 @@ function GeminiClient:detectMergeGroups(characters, prompt_template)
         return nil, "API key is not set."
     end
     if not characters or #characters < 2 then return {}, nil end
-
-    local tmpl = prompt_template or GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_MERGE_DETECTION_PROMPT
     local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url     = API_BASE .. "?key=" .. self.api_key,
-        method  = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then return nil, "Gemini returned no text" end
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.1, 8192)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 GeminiClient.DEFAULT_UNNAMED_MATCH_PROMPT = [[
@@ -872,47 +727,14 @@ function GeminiClient:detectUnnamedMatches(unnamed_chars, named_chars, prompt_te
     end
     if not unnamed_chars or #unnamed_chars == 0 then return {}, nil end
     if not named_chars   or #named_chars   == 0 then return {}, nil end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_UNNAMED_MATCH_PROMPT
     local prompt = sub(tmpl, "{{unnamed}}", json.encode(unnamed_chars))
-    prompt       = sub(prompt, "{{named}}",   json.encode(named_chars))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 4096 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url     = API_BASE .. "?key=" .. self.api_key,
-        method  = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then return nil, "Gemini returned no text" end
-    text = stripCodeFences(text)
+    prompt       = sub(prompt, "{{named}}",  json.encode(named_chars))
+    local text, err, usage = self:_post(prompt, 0.1, 4096)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 -- Clean up a character profile: remove duplicate/redundant text in all fields
@@ -920,49 +742,13 @@ function GeminiClient:cleanCharacter(character, cleanup_prompt)
     if not self.api_key or self.api_key == "" then
         return nil, "API key is not set."
     end
-
-    local tmpl = cleanup_prompt or GeminiClient.DEFAULT_CLEANUP_PROMPT
+    local tmpl   = cleanup_prompt or GeminiClient.DEFAULT_CLEANUP_PROMPT
     local prompt = sub(tmpl, "{{character}}", json.encode(character))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.1, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url     = API_BASE .. "?key=" .. self.api_key,
-        method  = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then return nil, "Gemini returned no text" end
-
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.1, 8192)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT = [[
@@ -995,50 +781,11 @@ function GeminiClient:buildRelationshipMap(characters, prompt_template)
     if not characters or #characters == 0 then
         return nil, "No characters to map."
     end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_RELATIONSHIP_MAP_PROMPT
     local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.3, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url    = API_BASE .. "?key=" .. self.api_key,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse Gemini response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
-    return text:match("^%s*(.-)%s*$"), nil, extractUsage(parsed)
+    local text, err, usage = self:_post(prompt, 0.3, 8192)
+    if not text then return nil, err end
+    return text:match("^%s*(.-)%s*$"), nil, usage
 end
 
 -- ---------------------------------------------------------------------------
@@ -1161,51 +908,11 @@ function GeminiClient:createCodexEntry(page_text, name, prompt_template)
     if not self.api_key or self.api_key == "" then
         return nil, "API key is not set. Please configure it in the plugin settings."
     end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_CREATE_PROMPT
     local prompt = sub(tmpl, "{{name}}", name)
     prompt       = sub(prompt, "{{text}}", page_text)
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 4096 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url    = API_BASE .. "?key=" .. self.api_key,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse Gemini response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.2, 4096)
+    if not text then return nil, err end
     local entry, _, jerr = json.decode(text)
     if not entry then
         return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
@@ -1213,7 +920,7 @@ function GeminiClient:createCodexEntry(page_text, name, prompt_template)
     if type(entry) ~= "table" or type(entry.name) ~= "string" then
         return nil, "Expected a JSON object with a name field"
     end
-    return entry, nil, extractUsage(parsed)
+    return entry, nil, usage
 end
 
 -- Enrich a batch of existing codex entries against a page passage.
@@ -1224,51 +931,11 @@ function GeminiClient:enrichCodexEntries(page_text, entries, prompt_template)
         return nil, "API key is not set. Please configure it in the plugin settings."
     end
     if not entries or #entries == 0 then return {}, nil end
-
     local tmpl   = prompt_template or GeminiClient.DEFAULT_CODEX_UPDATE_PROMPT
     local prompt = sub(tmpl, "{{entries}}", json.encode(entries))
     prompt       = sub(prompt, "{{text}}", page_text)
-
-    local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 8192 },
-    })
-
-    local response_body = {}
-    local ok, status = https.request({
-        url    = API_BASE .. "?key=" .. self.api_key,
-        method = "POST",
-        headers = {
-            ["Content-Type"]   = "application/json",
-            ["Content-Length"] = tostring(#request_body),
-        },
-        source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
-    })
-
-    if not ok then return nil, "Network error: " .. tostring(status) end
-
-    local raw    = table.concat(response_body)
-    local parsed = json.decode(raw)
-    if not parsed then return nil, "Failed to parse Gemini response" end
-    if status ~= 200 then
-        local detail = parsed.error and parsed.error.message or raw:sub(1, 200)
-        return nil, "API error (HTTP " .. tostring(status) .. "): " .. detail
-    end
-
-    local text = parsed.candidates
-        and parsed.candidates[1]
-        and parsed.candidates[1].content
-        and parsed.candidates[1].content.parts
-        and parsed.candidates[1].content.parts[1]
-        and parsed.candidates[1].content.parts[1].text
-    if not text or text == "" then
-        local reason = parsed.candidates and parsed.candidates[1]
-            and parsed.candidates[1].finishReason or "unknown"
-        return nil, "Gemini returned no text. Finish reason: " .. reason
-    end
-
-    text = stripCodeFences(text)
+    local text, err, usage = self:_post(prompt, 0.2, 8192)
+    if not text then return nil, err end
     local result, _, jerr = json.decode(text)
     if not result then
         return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
@@ -1276,7 +943,7 @@ function GeminiClient:enrichCodexEntries(page_text, entries, prompt_template)
     if type(result) ~= "table" then
         return nil, "Expected a JSON array, got: " .. type(result)
     end
-    return result, nil, extractUsage(parsed)
+    return result, nil, usage
 end
 
 -- Fetch model metadata from the Gemini models endpoint

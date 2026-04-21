@@ -1,10 +1,11 @@
 -- db_character.lua
 -- Manages per-book character storage using JSON files in the history directory
 
-local json        = require("dkjson")
-local DataStorage = require("datastorage")
-local util        = require("util")
-local logger      = require("logger")
+local json           = require("dkjson")
+local DataStorage    = require("datastorage")
+local util           = require("util")
+local logger         = require("logger")
+local UtilsCharacter = require("utils_character")
 
 local _id_seq = 0
 local function generateId()
@@ -12,17 +13,17 @@ local function generateId()
     return tostring(os.time()) .. "_" .. tostring(_id_seq)
 end
 
--- Union two arrays of strings, preserving order and deduplicating by value.
-local function unionArrays(a, b)
-    local seen = {}
-    local result = {}
-    for _, v in ipairs(a or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    for _, v in ipairs(b or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    return result
+local function readJson(path, default)
+    local f = io.open(path, "r")
+    if not f then return default end
+    local content = f:read("*a"); f:close()
+    return json.decode(content) or default
+end
+
+local function writeJson(path, data)
+    local f = io.open(path, "w")
+    if f then f:write(json.encode(data)); f:close()
+    else logger.warn("KoCharacters: could not write to " .. path) end
 end
 
 -- Merge two text fields: skip if one already contains the other (case-insensitive)
@@ -128,7 +129,7 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 if first_seen                        then existing[idx].first_seen_page      = first_seen  end
                 if first_quote and first_quote ~= "" then existing[idx].first_appearance_quote = first_quote end
                 if page_num                          then existing[idx].source_page          = page_num    end
-                existing[idx].defining_moments = unionArrays(prev_moments, existing[idx].defining_moments)
+                existing[idx].defining_moments = UtilsCharacter.unionArrays(prev_moments, existing[idx].defining_moments)
                 changed = true
             else
                 c.id = generateId()
@@ -198,7 +199,7 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     for t in pairs(tag_set) do table.insert(merged_tags, t) end
 
     -- defining_moments: union of both (append-only, preserve all distinct events)
-    local merged_moments = unionArrays(target.defining_moments, source.defining_moments)
+    local merged_moments = UtilsCharacter.unionArrays(target.defining_moments, source.defining_moments)
 
     -- motivation: prefer target's if set, otherwise take source's
     local motivation = (target.motivation and target.motivation ~= "") and target.motivation
@@ -269,7 +270,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             for t in pairs(tag_set) do table.insert(merged_tags, t) end
 
             -- defining_moments: append incoming to existing (never overwrite)
-            local merged_moments = unionArrays(c.defining_moments, extra.defining_moments)
+            local merged_moments = UtilsCharacter.unionArrays(c.defining_moments, extra.defining_moments)
 
             -- motivation: take extra's value only if current is empty
             local motivation = (c.motivation and c.motivation ~= "") and c.motivation
@@ -454,10 +455,7 @@ function CharacterDB:pendingPagesPath(book_md5)
 end
 
 function CharacterDB:loadPendingPages(book_md5)
-    local f = io.open(self:pendingPagesPath(book_md5), "r")
-    if not f then return {} end
-    local content = f:read("*a"); f:close()
-    return json.decode(content) or {}
+    return readJson(self:pendingPagesPath(book_md5), {})
 end
 
 function CharacterDB:hasPendingPages(book_md5)
@@ -468,10 +466,7 @@ function CharacterDB:markPagePending(book_md5, page_num)
     local pages = self:loadPendingPages(book_md5)
     for _, p in ipairs(pages) do if p == page_num then return end end
     table.insert(pages, page_num)
-    local path = self:pendingPagesPath(book_md5)
-    local f = io.open(path, "w")
-    if f then f:write(json.encode(pages)); f:close()
-    else logger.warn("KoCharacters: could not write pending pages to " .. path) end
+    writeJson(self:pendingPagesPath(book_md5), pages)
 end
 
 -- Remove a list of page numbers from the pending list
@@ -485,10 +480,7 @@ function CharacterDB:removePendingPages(book_md5, pages_to_remove)
     if #new_list == 0 then
         os.remove(self:pendingPagesPath(book_md5))
     else
-        local path = self:pendingPagesPath(book_md5)
-        local f = io.open(path, "w")
-        if f then f:write(json.encode(new_list)); f:close()
-        else logger.warn("KoCharacters: could not write pending pages to " .. path) end
+        writeJson(self:pendingPagesPath(book_md5), new_list)
     end
 end
 

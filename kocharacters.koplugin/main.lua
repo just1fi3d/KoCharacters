@@ -127,15 +127,17 @@ function KoCharacters:init()
             local selected = highlight_instance.selected_text
             local word = selected and (selected.text or selected.word or "") or ""
             word = word:match("^%s*(.-)%s*$") or ""
-            if word == "" then return nil end
             local book_id = self_ref:getBookID()
-            if not book_id then return nil end
-            local all_chars = self_ref.db:load(book_id)
-            if #all_chars == 0 then return nil end
-            local matches = UICharacter.findMatchesForWord(all_chars, word)
-            if #matches == 0 then return nil end
+            local matches = {}
+            if word ~= "" and book_id then
+                local all_chars = self_ref.db:load(book_id)
+                if #all_chars > 0 then
+                    matches = UICharacter.findMatchesForWord(all_chars, word)
+                end
+            end
             return {
                 text = "View character",
+                show_in_highlight_dialog_func = function() return #matches > 0 end,
                 callback = function()
                     if highlight_instance.highlight_dialog then
                         UIManager:close(highlight_instance.highlight_dialog)
@@ -159,6 +161,7 @@ function KoCharacters:init()
             local is_known = book_id and word ~= "" and self_ref.db_codex:isNameKnown(book_id, word)
             return {
                 text = is_known and "View in Codex" or "Track in Codex",
+                show_in_highlight_dialog_func = function() return book_id ~= nil and word ~= "" end,
                 callback = function()
                     if highlight_instance.highlight_dialog then
                         UIManager:close(highlight_instance.highlight_dialog)
