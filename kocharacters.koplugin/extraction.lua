@@ -538,9 +538,7 @@ function Extraction:_processCharacterJob(job, book_id)
 
         if api_err then
             logger.warn("KoCharacters: async api_err page=" .. tostring(page_ref) .. ": " .. tostring(api_err))
-            local is_retryable = type(api_err) == "string"
-                and (api_err:find("Network error") or api_err:find("503") or api_err:find("429")
-                     or api_err:find("quota") or api_err:find("high demand") or api_err:find("overload"))
+            local is_retryable = GeminiClient.isRetryableError(api_err)
             local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
                 local retries = (job.retries or 0)
@@ -686,9 +684,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         os.remove(resp_file)
 
         if api_err then
-            local is_retryable = type(api_err) == "string"
-                and (api_err:find("Network error") or api_err:find("503")
-                     or api_err:find("429") or api_err:find("quota") or api_err:find("overload"))
+            local is_retryable = GeminiClient.isRetryableError(api_err)
             local err_str = tostring(api_err):sub(1, 120)
             if is_retryable then
                 local r = retries or 0
@@ -946,9 +942,7 @@ function Extraction:onScanPendingPages(book_id)
         if api_err then
             local err_str = tostring(api_err):sub(1, 120)
             logger.warn("KoCharacters: pending scan p" .. page_num .. ": " .. err_str)
-            local is_retryable = api_err:find("Network error") or api_err:find("503")
-                or api_err:find("429") or api_err:find("quota")
-                or api_err:find("high demand") or api_err:find("overload")
+            local is_retryable = GeminiClient.isRetryableError(api_err)
             if is_retryable then
                 self_ref.db:markPagePending(book_id, page_num)
                 self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": API busy — kept pending (" .. err_str .. ")")
