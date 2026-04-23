@@ -628,6 +628,12 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
             codex_entries = related_codex,
         })
 
+        local viewer_close = {}
+
+        local function back_to_current()
+            UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query, refresh_browser_fn)
+        end
+
         local function charLinkCallback(link)
             local link_url = type(link) == "table" and (link.uri or "") or tostring(link)
             local scheme, target = link_url:match("^([^:]+):(.+)$")
@@ -639,8 +645,9 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
             if scheme == "char" then
                 local found = UtilsCharacter.findByPartialName(plugin.db:load(book_id), target_lower)
                 if found then
+                    if viewer_close.close then viewer_close.close() end
                     UIManager:scheduleIn(0.15, function()
-                        UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, refresh_browser_fn)
+                        UICharacter.showCharacterViewer(plugin, book_id, found, sort_mode, query, back_to_current)
                     end)
                 end
             elseif scheme == "codex" then
@@ -660,8 +667,9 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                     end
                 end
                 if found then
+                    if viewer_close.close then viewer_close.close() end
                     UIManager:scheduleIn(0.15, function()
-                        UICodex.showEntryViewer(plugin, book_id, found, refresh_browser_fn)
+                        UICodex.showEntryViewer(plugin, book_id, found, back_to_current)
                     end)
                 end
             end
@@ -672,6 +680,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
             html_body     = html_body,
             html_css      = html_css,
             resource_dir  = portraits_dir,
+            close_ref     = viewer_close,
             link_callback = charLinkCallback,
             make_buttons  = function(close_fn)
                 local rows = make_buttons(close_fn)

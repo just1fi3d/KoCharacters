@@ -351,7 +351,11 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
             if found_codex then
                 if viewer_close.close then viewer_close.close() end
                 UIManager:scheduleIn(0.15, function()
-                    UICodex.showEntryViewer(plugin, book_id, found_codex, refresh_browser_fn)
+                    local function back_to_entry()
+                        local fresh = plugin.db_codex:findByName(book_id, name)
+                        UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
+                    end
+                    UICodex.showEntryViewer(plugin, book_id, found_codex, back_to_entry)
                 end)
                 return
             end
@@ -364,7 +368,11 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
             if found_char then
                 if viewer_close.close then viewer_close.close() end
                 UIManager:scheduleIn(0.15, function()
-                    UICharacter.showCharacterViewer(plugin, book_id, found_char, nil, nil, refresh_browser_fn)
+                    local function back_to_entry()
+                        local fresh = plugin.db_codex:findByName(book_id, name)
+                        UICodex.showEntryViewer(plugin, book_id, fresh or entry, refresh_browser_fn)
+                    end
+                    UICharacter.showCharacterViewer(plugin, book_id, found_char, nil, nil, back_to_entry)
                 end)
             end
         end
