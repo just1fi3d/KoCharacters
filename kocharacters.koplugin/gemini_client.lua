@@ -737,6 +737,53 @@ function GeminiClient:detectUnnamedMatches(unnamed_chars, named_chars, prompt_te
     return result, nil, usage
 end
 
+GeminiClient.DEFAULT_CROSS_REFERENCE_PROMPT = [[
+You are reviewing character profiles from a book to find missing bidirectional information.
+
+For each character, read their defining_moments and relationships for events or connections that involve another named character from the list. If Character A's profile records a significant event affecting Character B, but B's profile has no entry recording that same event from B's perspective, generate an addition for B.
+
+Example of the gap to look for:
+- Character A defining_moment: "He abandoned his original body and transferred his consciousness into the corpse of Character B."
+- Character B has no defining_moment about this event.
+- Correct addition: {"target": "Character B", "field": "defining_moments", "add": "His corpse was reanimated and inhabited by Character A's consciousness."}
+
+More patterns to look for:
+- A executed / imprisoned / surgically modified B → B has no entry for that event
+- A lists B as a named relationship role (captor, victim, killer, etc.) but B has no corresponding entry for A
+- A's defining_moment names B as directly involved but B's profile is silent on that event
+
+Rules:
+- Only add facts directly implied by existing profile data. Do not invent.
+- Additions only — never remove or modify existing entries.
+- For defining_moments: third-person, past tense, factual, same style as existing entries. Skip if the same fact is already covered in B even if worded differently.
+- For relationships: "Name (description)" format. Skip if an equivalent entry already exists.
+- Skip trivial or symmetric acquaintance-level relationships — focus on significant one-way-door events and named role relationships.
+- If there are no meaningful gaps, return an empty array [].
+
+Return ONLY a valid JSON array (no markdown, no code fences). Each element has exactly these keys:
+{ "target": "name of character to update", "field": "defining_moments" or "relationships", "add": "string to add to that field's array" }
+
+Character profiles:
+{{characters}}
+]]
+
+-- Find asymmetric cross-references and return additions to apply to referenced characters.
+-- Returns: array of {target, field, add} or nil, err, usage
+function GeminiClient:propagateCrossReferences(characters, prompt_template)
+    if not self.api_key or self.api_key == "" then
+        return nil, "API key is not set."
+    end
+    if not characters or #characters < 2 then return {}, nil end
+    local tmpl   = prompt_template or GeminiClient.DEFAULT_CROSS_REFERENCE_PROMPT
+    local prompt = sub(tmpl, "{{characters}}", json.encode(characters))
+    local text, err, usage = self:_post(prompt, 0.1, 4096)
+    if not text then return nil, err end
+    local result, _, jerr = json.decode(text)
+    if not result then return nil, "Invalid JSON: " .. tostring(jerr) end
+    if type(result) ~= "table" then return nil, "Expected a JSON array" end
+    return result, nil, usage
+end
+
 -- Clean up a character profile: remove duplicate/redundant text in all fields
 function GeminiClient:cleanCharacter(character, cleanup_prompt)
     if not self.api_key or self.api_key == "" then

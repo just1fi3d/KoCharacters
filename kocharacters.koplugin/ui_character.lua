@@ -342,6 +342,19 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                 end,
             },
             {
+                text     = "Identity tags: " .. table.concat(char.identity_tags or {}, ", "),
+                callback = function()
+                    editTextField("Identity tags (comma-separated)", table.concat(char.identity_tags or {}, ", "), false, function(val)
+                        local t = {}
+                        for a in val:gmatch("[^,]+") do
+                            local s = a:match("^%s*(.-)%s*$")
+                            if s ~= "" then table.insert(t, s) end
+                        end
+                        char.identity_tags = t; save(); after_save()
+                    end)
+                end,
+            },
+            {
                 text     = "Appearance",
                 callback = function()
                     editTextField("Appearance", char.physical_description, true, function(val)
@@ -358,6 +371,14 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                 end,
             },
             {
+                text     = "Motivation",
+                callback = function()
+                    editTextField("Motivation", char.motivation, true, function(val)
+                        char.motivation = val ~= "" and val or nil; save(); after_save()
+                    end)
+                end,
+            },
+            {
                 text     = "Relationships (one per line)",
                 callback = function()
                     editTextField("Relationships", table.concat(char.relationships or {}, "\n"), true, function(val)
@@ -367,6 +388,19 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                             if s ~= "" then table.insert(t, s) end
                         end
                         char.relationships = t; save(); after_save()
+                    end)
+                end,
+            },
+            {
+                text     = "Defining moments (one per line)",
+                callback = function()
+                    editTextField("Defining Moments", table.concat(char.defining_moments or {}, "\n"), true, function(val)
+                        local t = {}
+                        for r in val:gmatch("[^\n]+") do
+                            local s = r:match("^%s*(.-)%s*$")
+                            if s ~= "" then table.insert(t, s) end
+                        end
+                        char.defining_moments = t; save(); after_save()
                     end)
                 end,
             },
@@ -1417,6 +1451,101 @@ function UICharacter.onWordCharacterLookup(plugin, word)
     end
 
     UICharacter.showCharacterBrowser(plugin, book_id, "default", word)
+end
+
+-- ---------------------------------------------------------------------------
+-- Cross-reference propagation
+-- ---------------------------------------------------------------------------
+
+function UICharacter.onPropagateCrossReferences(plugin)
+    local book_id = plugin:getBookID()
+    if not book_id then
+        plugin:showMsg("Cannot identify book — is a document open?")
+        return
+    end
+    local characters = plugin.db:load(book_id)
+    if #characters < 2 then
+        plugin:showMsg("Not enough characters to cross-reference.", 3)
+        return
+    end
+    local api_key = plugin:getApiKey()
+    if api_key == "" then
+        plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
+        return
+    end
+
+    local working_msg = InfoMessage:new{ text = "Scanning for cross-reference gaps..." }
+    UIManager:show(working_msg)
+    UIManager:forceRePaint()
+
+    local client = GeminiClient:new(api_key)
+    local updates = UIShared.callApi(plugin, function()
+        return client:propagateCrossReferences(characters, plugin:getCrossReferencePrompt())
+    end, working_msg)
+    if not updates then return end
+
+    if #updates == 0 then
+        plugin:showMsg("No cross-reference gaps found.", 4)
+        return
+    end
+
+    local name_set = {}
+    for _, c in ipairs(characters) do name_set[c.name] = true end
+    local VALID_FIELDS = { defining_moments = true, relationships = true, identity_tags = true }
+    local valid = {}
+    for _, u in ipairs(updates) do
+        if u.target and name_set[u.target] and u.field and VALID_FIELDS[u.field]
+                and type(u.add) == "string" and u.add ~= "" then
+            table.insert(valid, u)
+        end
+    end
+
+    if #valid == 0 then
+        plugin:showMsg("No valid cross-reference gaps found.", 4)
+        return
+    end
+
+    local apply_count = 0
+    local all_chars   = plugin.db:load(book_id)
+
+    local function applyNext(remaining)
+        if #remaining == 0 then
+            if apply_count > 0 then
+                plugin.db:save(book_id, all_chars)
+                plugin:appendActivityLog(book_id, "Cross-referenced " .. apply_count .. " field(s)")
+                plugin:showMsg(apply_count .. " cross-reference(s) applied.", 4)
+            else
+                plugin:showMsg("No cross-references applied.", 4)
+            end
+            return
+        end
+
+        local u    = remaining[1]
+        local rest = { table.unpack(remaining, 2) }
+        UIManager:show(ConfirmBox:new{
+            text        = 'Add to ' .. u.target .. '\u{2019}s ' .. u.field:gsub("_", " ")
+                          .. '?\n\n"' .. u.add .. '"',
+            ok_text     = "Add",
+            cancel_text = "Skip",
+            ok_callback = function()
+                for _, c in ipairs(all_chars) do
+                    if c.name == u.target then
+                        local arr = c[u.field] or {}
+                        table.insert(arr, u.add)
+                        c[u.field] = arr
+                        apply_count = apply_count + 1
+                        break
+                    end
+                end
+                applyNext(rest)
+            end,
+            cancel_callback = function()
+                applyNext(rest)
+            end,
+        })
+    end
+
+    applyNext(valid)
 end
 
 -- ---------------------------------------------------------------------------

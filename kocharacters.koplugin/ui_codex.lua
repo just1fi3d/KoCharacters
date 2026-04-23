@@ -457,6 +457,31 @@ function UICodex.onEditEntry(plugin, book_id, entry, refresh_browser_fn, show_vi
                 end,
             },
             {
+                text     = "Type: " .. (entry.type or "unknown"),
+                callback = function()
+                    local type_menu
+                    local type_items = {}
+                    for _, t in ipairs({"place","faction","concept","object","species","unknown"}) do
+                        local tval = t
+                        table.insert(type_items, {
+                            text     = tval,
+                            callback = function()
+                                entry.type = tval; save()
+                                UIManager:close(type_menu)
+                                after_save()
+                            end,
+                        })
+                    end
+                    type_menu = Menu:new{
+                        title       = "Select Type",
+                        item_table  = type_items,
+                        width       = Screen:getWidth(),
+                        show_parent = plugin.ui,
+                    }
+                    UIManager:show(type_menu)
+                end,
+            },
+            {
                 text     = "Aliases: " .. table.concat(entry.aliases or {}, ", "),
                 callback = function()
                     editTextField("Aliases (comma-separated)", table.concat(entry.aliases or {}, ", "), false, function(val)

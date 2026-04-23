@@ -21,9 +21,18 @@ function UtilsCharacter.unionArrays(a, b)
     return result
 end
 
--- Find a character in a list by partial name or alias match (bidirectional substring).
+-- Find a character in a list by name or alias match.
+-- Exact matches are tried first across the whole list; partial (bidirectional substring)
+-- matches are the fallback. This prevents a shared surname alias (e.g. "Ferron" for
+-- Kaine Ferron) from matching before the full-name character (Atreus Ferron).
 -- target_lower must already be lowercased.
 function UtilsCharacter.findByPartialName(characters, target_lower)
+    for _, c in ipairs(characters) do
+        if (c.name or ""):lower() == target_lower then return c end
+        for _, alias in ipairs(c.aliases or {}) do
+            if alias:lower() == target_lower then return c end
+        end
+    end
     for _, c in ipairs(characters) do
         local cname = (c.name or ""):lower()
         if cname:find(target_lower, 1, true) or target_lower:find(cname, 1, true) then

@@ -347,6 +347,7 @@ function KoCharacters:addToMainMenu(menu_items)
         { text = _("Detect & merge duplicates"),  callback = function() self_ref:onMergeDetection() end },
         { text = _("Cleanup all characters"),     callback = function() self_ref:onCleanupAllCharacters() end },
         { text = _("Cleanup all codex entries"),  callback = function() self_ref:onCleanupAllCodexEntries() end },
+        { text = _("Sync cross-references"),      callback = function() UICharacter.onPropagateCrossReferences(self_ref) end },
         { text = _("Generate portraits"),         callback = function() Portrait.batchGenerate(self_ref) end, separator = true },
         -- Export / misc
         {
@@ -486,6 +487,11 @@ end
 function KoCharacters:getCodexCleanupPrompt()
     return G_reader_settings:readSetting("kocharacters_codex_cleanup_prompt")
         or GeminiClient.DEFAULT_CODEX_CLEANUP_PROMPT
+end
+
+function KoCharacters:getCrossReferencePrompt()
+    return G_reader_settings:readSetting("kocharacters_cross_reference_prompt")
+        or GeminiClient.DEFAULT_CROSS_REFERENCE_PROMPT
 end
 
 function KoCharacters:recordUsage(usage)
