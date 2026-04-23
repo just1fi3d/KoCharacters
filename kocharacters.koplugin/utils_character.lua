@@ -4,23 +4,6 @@
 
 local UtilsCharacter = {}
 
--- ---------------------------------------------------------------------------
--- Array / set utilities
--- ---------------------------------------------------------------------------
-
--- Union two arrays of strings, preserving order and deduplicating by value.
-function UtilsCharacter.unionArrays(a, b)
-    local seen = {}
-    local result = {}
-    for _, v in ipairs(a or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    for _, v in ipairs(b or {}) do
-        if v ~= "" and not seen[v] then seen[v] = true; table.insert(result, v) end
-    end
-    return result
-end
-
 -- Find a character in a list by name or alias match.
 -- Exact matches are tried first across the whole list; partial (bidirectional substring)
 -- matches are the fallback. This prevents a shared surname alias (e.g. "Ferron" for

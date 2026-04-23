@@ -6,6 +6,7 @@ local DataStorage    = require("datastorage")
 local util           = require("util")
 local logger         = require("logger")
 local UtilsCharacter = require("utils_character")
+local UtilsShared    = require("utils_shared")
 
 local _id_seq = 0
 local function generateId()
@@ -87,9 +88,10 @@ function CodexDB:merge(book_md5, new_entries, page_num)
                 e.first_appearance_quote = (ex.first_appearance_quote and ex.first_appearance_quote ~= "")
                                            and ex.first_appearance_quote
                                            or e.first_appearance_quote
-                e.aliases              = UtilsCharacter.unionArrays(ex.aliases, e.aliases)
-                e.known_connections    = UtilsCharacter.unionArrays(ex.known_connections, e.known_connections)
+                e.aliases              = UtilsShared.unionArrays(ex.aliases, e.aliases)
+                e.known_connections    = UtilsShared.unionArrays(ex.known_connections, e.known_connections)
                 if page_num then e.source_page = page_num end
+                e.seen_pages           = UtilsShared.addSeenPage(ex.seen_pages, page_num)
                 existing[idx] = e
                 changed = true
             else
@@ -98,6 +100,7 @@ function CodexDB:merge(book_md5, new_entries, page_num)
                     e.source_page     = page_num
                     e.first_seen_page = e.first_seen_page or page_num
                 end
+                e.seen_pages = UtilsShared.addSeenPage(nil, page_num)
                 table.insert(existing, e)
                 name_to_idx[e.name:lower()] = #existing
                 added = added + 1

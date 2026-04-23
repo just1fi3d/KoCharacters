@@ -10,9 +10,10 @@ local Screen      = require("device").screen
 local logger      = require("logger")
 local _           = require("gettext")
 
-local GeminiClient = require("gemini_client")
+local GeminiClient   = require("gemini_client")
 local UtilsCharacter = require("utils_character")
-local EpubReader   = require("epub_reader")
+local UtilsShared    = require("utils_shared")
+local EpubReader     = require("epub_reader")
 
 local Extraction = {}
 Extraction.__index = Extraction
@@ -82,9 +83,9 @@ function Extraction.new(deps)
     self._pending_notified = false
     -- Page-count cache for scanned-history invalidation
     self._cached_page_count     = nil
-    -- In-memory set of pages where codex enrichment has run this session.
-    -- Cleared when a new codex entry is added so new entries get picked up.
-    self._codex_scanned         = {}
+    -- In-memory set of pages where codex enrichment hit a non-retryable error this session.
+    -- Prevents hammering the API on pages that returned a hard error.
+    self._codex_error_pages     = {}
     -- Pages where codex enrichment hit a retryable API error and had entries to match.
     -- Drained (re-enqueued) after the next successful codex call.
     self._codex_pending         = {}
@@ -311,7 +312,7 @@ function Extraction:onPageChanged(pageno)
 
     local char_scanned = self.db:isPageScanned(book_id, pageno)
     if char_scanned then
-        if self._codex_scanned[pageno] then return end
+        if self._codex_error_pages[pageno] then return end
         if #self.db_codex:load(book_id) == 0 then return end
     end
 
@@ -377,10 +378,10 @@ function Extraction:cleanup()
     end
     if self._curl_req_file  then os.remove(self._curl_req_file);  self._curl_req_file  = nil end
     if self._curl_resp_file then os.remove(self._curl_resp_file); self._curl_resp_file = nil end
-    self._extract_queue   = {}
-    self._extract_running = false
-    self._codex_scanned   = {}
-    self._codex_pending   = {}
+    self._extract_queue     = {}
+    self._extract_running   = false
+    self._codex_error_pages = {}
+    self._codex_pending     = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -612,12 +613,18 @@ end
 -- Async codex enrichment — spawns a subprocess and polls, then calls on_done when finished.
 -- retries tracks how many times this page has already been retried (default 0, max 2).
 function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, retries)
-    if self._codex_scanned[pageno] then
+    if self._codex_error_pages[pageno] then
         if on_done then on_done() end
         return
     end
 
-    local entries = self.db_codex:getEntriesForPage(book_id, page_text)
+    local all_entries = self.db_codex:getEntriesForPage(book_id, page_text)
+    local entries = {}
+    for _, e in ipairs(all_entries) do
+        if not UtilsShared.hasSeenPage(e.seen_pages, pageno) then
+            table.insert(entries, e)
+        end
+    end
     if #entries == 0 then
         if on_done then on_done() end
         return
@@ -637,7 +644,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         self._get_codex_update_prompt and self._get_codex_update_prompt())
     if not ok then
         logger.warn("KoCharacters: codex buildRequestFile failed: " .. tostring(build_err))
-        self._codex_scanned[pageno] = true
+        self._codex_error_pages[pageno] = true
         if on_done then on_done() end
         return
     end
@@ -701,7 +708,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
                     if on_done then on_done() end
                 end
             else
-                self_ref._codex_scanned[pageno] = true
+                self_ref._codex_error_pages[pageno] = true
                 self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API error — skipped (" .. err_str .. ")")
                 if on_done then on_done() end
             end
@@ -709,7 +716,6 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         end
 
         if usage then self_ref._record_usage(usage) end
-        self_ref._codex_scanned[pageno] = true
         self_ref._codex_pending[pageno] = nil
         if updated and #updated > 0 then
             self_ref.db_codex:merge(book_id, updated, pageno)
@@ -726,10 +732,6 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
     UIManager:scheduleIn(1.5, poll)
 end
 
-function Extraction:clearCodexScanned()
-    self._codex_scanned = {}
-end
-
 -- Re-enqueue pages that had a retryable codex error. Called after a successful
 -- codex API response, while the API is demonstrably reachable.
 function Extraction:_drainCodexPending()
@@ -740,7 +742,7 @@ function Extraction:_drainCodexPending()
     if #pending == 0 then return end
     self._codex_pending = {}
     for _, pageno in ipairs(pending) do
-        if not self._codex_scanned[pageno] then
+        if not self._codex_error_pages[pageno] then
             local already = false
             for _, job in ipairs(self._extract_queue) do
                 if job.pageno == pageno and job.type == "codex" then

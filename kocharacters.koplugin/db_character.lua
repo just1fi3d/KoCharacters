@@ -6,6 +6,7 @@ local DataStorage    = require("datastorage")
 local util           = require("util")
 local logger         = require("logger")
 local UtilsCharacter = require("utils_character")
+local UtilsShared    = require("utils_shared")
 
 local _id_seq = 0
 local function generateId()
@@ -65,11 +66,15 @@ function CharacterDB:load(book_md5)
     if not data then
         return {}
     end
-    -- Backfill missing IDs (one-time migration for existing DBs)
+    -- Backfill missing IDs and seen_pages (one-time migration for existing DBs)
     local needs_save = false
     for _, c in ipairs(data) do
         if not c.id or c.id == "" then
             c.id = generateId()
+            needs_save = true
+        end
+        if not c.seen_pages and c.first_seen_page then
+            c.seen_pages = { c.first_seen_page }
             needs_save = true
         end
     end
@@ -130,11 +135,13 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 if first_quote and first_quote ~= "" then existing[idx].first_appearance_quote = first_quote end
                 if page_num                          then existing[idx].source_page          = page_num    end
                 if page_num                          then existing[idx].last_seen_page       = page_num    end
-                existing[idx].defining_moments = UtilsCharacter.unionArrays(prev_moments, existing[idx].defining_moments)
+                existing[idx].seen_pages       = UtilsShared.addSeenPage(existing[idx].seen_pages, page_num)
+                existing[idx].defining_moments = UtilsShared.unionArrays(prev_moments, existing[idx].defining_moments)
                 changed = true
             else
                 c.id = generateId()
                 if page_num then c.source_page = page_num; c.first_seen_page = page_num; c.last_seen_page = page_num end
+                c.seen_pages = UtilsShared.addSeenPage(nil, page_num)
                 table.insert(existing, c)
                 name_to_idx[c.name:lower()] = #existing
                 added = added + 1
@@ -200,7 +207,17 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     for t in pairs(tag_set) do table.insert(merged_tags, t) end
 
     -- defining_moments: union of both (append-only, preserve all distinct events)
-    local merged_moments = UtilsCharacter.unionArrays(target.defining_moments, source.defining_moments)
+    local merged_moments = UtilsShared.unionArrays(target.defining_moments, source.defining_moments)
+
+    -- seen_pages: sorted union of both
+    local seen_set, merged_seen = {}, {}
+    for _, p in ipairs(target.seen_pages or {}) do
+        if not seen_set[p] then seen_set[p] = true; table.insert(merged_seen, p) end
+    end
+    for _, p in ipairs(source.seen_pages or {}) do
+        if not seen_set[p] then seen_set[p] = true; table.insert(merged_seen, p) end
+    end
+    table.sort(merged_seen)
 
     -- motivation: prefer target's if set, otherwise take source's
     local motivation = (target.motivation and target.motivation ~= "") and target.motivation
@@ -229,6 +246,7 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     target.personality            = mergeText(target.personality, source.personality)
     target.motivation             = motivation
     target.defining_moments       = merged_moments
+    target.seen_pages             = merged_seen
     target.relationships          = merged_rels
     target.role                   = role
     target.first_appearance_quote = quote
@@ -271,7 +289,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             for t in pairs(tag_set) do table.insert(merged_tags, t) end
 
             -- defining_moments: append incoming to existing (never overwrite)
-            local merged_moments = UtilsCharacter.unionArrays(c.defining_moments, extra.defining_moments)
+            local merged_moments = UtilsShared.unionArrays(c.defining_moments, extra.defining_moments)
 
             -- motivation: take extra's value only if current is empty
             local motivation = (c.motivation and c.motivation ~= "") and c.motivation
@@ -294,6 +312,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
                 c.first_appearance_quote = extra.first_appearance_quote
             end
             if page_num then c.source_page = page_num; c.last_seen_page = page_num end
+            c.seen_pages    = UtilsShared.addSeenPage(c.seen_pages, page_num)
             c.needs_cleanup = true
 
             local ok, err = self:save(book_md5, characters)
