@@ -186,7 +186,7 @@ function Extraction:showExtractedCount(count, pageno)
     UIManager:scheduleIn(4, self._count_indicator_timer)
 end
 
-function Extraction:showExtractError()
+function Extraction:showExtractError(is_network)
     local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
     if level == "off" then return end
     if self._count_indicator then
@@ -207,7 +207,7 @@ function Extraction:showExtractError()
         padding    = 4,
         HorizontalGroup:new{
             TextWidget:new{
-                text = "⚠ API busy",
+                text = is_network and "⚠ No network" or "⚠ API busy",
                 face = Font:getFace("cfont", 20),
             },
         },
@@ -551,7 +551,7 @@ function Extraction:_processCharacterJob(job, book_id)
                     UIManager:scheduleIn(delay, function() self_ref:_processNextInQueue() end)
                 else
                     self_ref.db:markPagePending(book_ref, page_ref)
-                    self_ref:showExtractError()
+                    self_ref:showExtractError(tostring(api_err):find("Network error") ~= nil)
                     self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": API busy — max retries, marked pending (" .. err_str .. ")")
                     self_ref:_processNextInQueue()
                 end
@@ -703,7 +703,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
                     end)
                 else
                     self_ref._codex_pending[pageno] = true
-                    self_ref:showExtractError()
+                    self_ref:showExtractError(tostring(api_err):find("Network error") ~= nil)
                     self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — max retries, marked pending (" .. err_str .. ")")
                     if on_done then on_done() end
                 end
@@ -849,7 +849,7 @@ function Extraction:_checkAndPromptPendingPages(book_id)
 
     local self_ref = self
     UIManager:show(ConfirmBox:new{
-        text    = table.concat(parts, " and ") .. " couldn't be scanned while the API was busy.\nRetry now?",
+        text    = table.concat(parts, " and ") .. " couldn't be scanned (offline or API busy).\nRetry now?",
         ok_text = "Retry",
         ok_callback = function()
             if #char_pages > 0 then self_ref:onScanPendingPages(book_id) end
@@ -895,6 +895,7 @@ function Extraction:onScanPendingPages(book_id)
                 .. (total - #scanned_ok) .. " page(s) still pending."
         end
         self_ref._show_msg(msg, 6)
+        self_ref._pending_notified = false
     end
 
     local function processPage(idx)
