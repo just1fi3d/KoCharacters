@@ -35,7 +35,7 @@ You are analyzing a passage from a novel or book.
 Your tasks:
 1. Extract any NEW named characters who are introduced or significantly described in this passage.
 2. Update the profiles of EXISTING characters (listed below) who appear in this passage.
-   - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace existing values. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
+   - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace values that are already set. A previously blank field may be filled if the passage establishes information for it. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
    - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Existing character profiles to UPDATE (return updated profile only if they appear in this passage):
@@ -51,18 +51,19 @@ Rules:
 - If there is nothing to report, return an empty JSON array: []
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
-- For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Luc" is confirmed to be "Luc Holdfast"), use the full name and put the short name in aliases.
+- For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Sam" is confirmed to be "Sam Carter"), use the full name and put the short name in aliases.
 - For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
 - For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
-- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary.
+- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary. Fill only when there is textual evidence of a specific goal, fear, or belief — do not fabricate motivation from role alone. Use empty string if none is established.
+- For occupation: use the character's formal role, title, or profession. If not explicitly stated, infer from context or established identity (e.g. if the text establishes someone is a paladin or a general, use that). Do not leave blank simply because identity_tags already captures the role.
 - For defining_moments: only capture a "One-Way Door" event — one after which the character's status, body, or knowledge is permanently altered.
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
-    Exclude: combat without consequence, travel, standard dialogue, temporary moods.
-  Each entry must be one sentence in past tense. Append new entries; never duplicate existing ones.
-- For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. If an existing character is named "Helena Marino", write "Helena Marino (ally)", never "Helena (ally)". Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
+    Exclude: combat without consequence, travel, standard dialogue, temporary moods, recurring events.
+  Each entry must be one sentence in past tense. Before adding a new entry, check whether the existing list already captures this category of event — if a similar type of event is already recorded, do not add a new entry; a second occurrence of the same event type is not a new One-Way Door. Only append if this is a genuinely distinct threshold not yet captured.
+- For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. If an existing character is named "Amanda Clarke", write "Amanda Clarke (ally)", never "Amanda (ally)". Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
 - For role: default to "supporting" rather than "unknown" unless there is a clear reason the character cannot be classified.
 
 ---
@@ -124,13 +125,13 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
       "name": "Full name or best available name",
       "aliases": ["nickname", "title"],
       "identity_tags": ["Core faction, class, status, or demonstrated ability markers — e.g. 'Inquisition Member', 'Convicted Outlaw', 'Mistborn', 'Necromancer'. Distinct from occupation. Only include abilities the text explicitly establishes."],
-      "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — empty string if unknown",
+      "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — fill from explicit text or established identity; empty string only if genuinely unknown",
       "first_appearance_quote": "A short verbatim quote from the text where they first appear",
       "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
       "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
-      "motivation": "What drives this character at their core — their deepest goal, fear, or belief. Infer from choices and stated desires. Empty string if unknown.",
+      "motivation": "What drives this character at their core — their deepest goal, fear, or belief. Fill only when textual evidence supports a specific inference; empty string if none.",
       "defining_moments": ["A One-Way Door event that permanently altered this character's status, body, or knowledge — one sentence, past tense. Only include if this passage contains one."],
-      "role": "protagonist or antagonist or supporting or unknown",
+      "role": "protagonist or antagonist or supporting",
       "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\", \"Kira (rival)\". One entry per named person."]
     }
   ]
@@ -151,7 +152,7 @@ The character to update is:
 {{character}}
 
 Read the passage below and update the character's profile.
-- Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace existing values. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
+- Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace values that are already set. A previously blank field may be filled if the passage establishes information for it. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
 - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Rules:
@@ -159,7 +160,7 @@ Rules:
 - For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
 - Never append raw actions or scene summaries to any field.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
-- For defining_moments: ask — is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? If yes, add one past-tense sentence. If no, do not add anything. Append only; never remove or duplicate existing entries.
+- For defining_moments: ask two questions: (1) Is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? (2) Is this a genuinely novel category of event not yet captured in the existing entries? Only append if both answers are yes. If a similar type of event is already recorded, do not add a new entry — recurring instances of the same event type are not new One-Way Doors. Append only; never remove existing entries.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). Only include abilities the text explicitly establishes or acknowledges — never infer from personality. Otherwise preserve unchanged.
 - For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Otherwise preserve unchanged.
 - For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
@@ -193,11 +194,11 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "name": "Full name or best available name",
     "aliases": ["nickname", "title"],
     "identity_tags": ["Core faction, class, status, or demonstrated ability markers"],
-    "occupation": "Job title, profession, or social role — empty string if unknown",
+    "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — fill from explicit text or established identity; empty string only if genuinely unknown",
     "first_appearance_quote": "Keep existing quote unless a better one is found in this passage",
     "physical_description": "Merged appearance summary — explicit descriptions only",
     "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
-    "motivation": "What drives this character at their core — stable goal, fear, or belief. Empty string if unknown.",
+    "motivation": "What drives this character at their core — stable goal, fear, or belief. Fill only when textual evidence supports a specific inference; empty string if none.",
     "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
     "role": "protagonist or antagonist or supporting",
     "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\". One entry per named person."]
@@ -217,11 +218,11 @@ For each entry, clean up these fields:
 - name: apply Title Case (e.g. "Transference", "Animancer"). Preserve all-caps acronyms. Do not change proper nouns that are already correctly cased.
 - description: remove repetitions, combine fragmented observations into one fluent paragraph. If it has grown into an exhaustive list of observed instances or uses, synthesize into a general characterization of what the thing is and how it works.
 - significance: same — one coherent statement of narrative role. Must be distinct from description (not a restatement of what the thing does).
-- known_connections: normalize to "Name (relationship)" format, deduplicate. Replace any role descriptors (e.g. "protagonist", "subject") with the character's actual name if it can be inferred from context.
+- known_connections: normalize to "Name (relationship)" format. Each character or entity must appear exactly once — if the same character appears with multiple roles, merge into one entry (e.g. "Lord Vance (employer, rival)"). Replace any role descriptors (e.g. "protagonist", "subject") with the character's actual name if it can be inferred from context.
 - aliases: deduplicate, remove entries that are just alternate casings of the name
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of entries in the same order. Each element must have exactly these keys:
-[{ "name": "...", "description": "...", "significance": "...", "known_connections": ["..."], "aliases": ["..."] }]
+[{ "name": "...", "type": "...", "description": "...", "significance": "...", "known_connections": ["..."], "aliases": ["..."] }]
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
@@ -251,16 +252,18 @@ Clean up each text field:
 - If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
-- For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
+- For defining_moments: consolidate entries that describe the same category of recurring event — if multiple entries cover the same type of action or experience, even if worded differently, merge them into one using the most complete phrasing. Then remove any remaining exact duplicates. Ensure each remaining entry reads as a permanent state change, not a scene description.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
-- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
+- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
+- For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
   "name": "...",
   "aliases": ["..."],
+  "occupation": "...",
   "identity_tags": ["..."],
   "physical_description": "...",
   "personality": "...",
@@ -277,7 +280,7 @@ Input:
 {"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
 
 Correct output:
-{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
+{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
 
 Key points shown above:
 - Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
@@ -602,14 +605,15 @@ For each character, clean up the text fields:
 - If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
-- For defining_moments: deduplicate. Ensure each entry reads as a permanent state change, not a scene description. Do not rephrase — preserve original wording for distinct events.
+- For defining_moments: consolidate entries that describe the same category of recurring event — if multiple entries cover the same type of action or experience, even if worded differently, merge them into one using the most complete phrasing. Then remove any remaining exact duplicates. Ensure each remaining entry reads as a permanent state change, not a scene description.
 - For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
-- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Luc" but aliases contains "Luc Holdfast"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Warden Mandl" over "Mandl").
+- For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
+- For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
-[{ "name": "...", "aliases": ["..."], "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
+[{ "name": "...", "aliases": ["..."], "occupation": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
@@ -618,7 +622,7 @@ Input:
 [{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
 
 Correct output:
-[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
+[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
 
 Key points shown above:
 - Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
@@ -850,6 +854,7 @@ Your tasks:
 
 Rules:
 - name: capitalize as a proper noun or world-specific term (e.g. "Resonance", "Transference", "The Iron Guild"). Use title case for multi-word names.
+- type: classify as — place (locations, regions, buildings), faction (organizations, groups, institutions), concept (abilities, systems, phenomena, abstract forces, and practitioner roles defined by what someone can do), object (physical items or artifacts), or species (beings biologically or fundamentally distinct from ordinary humans, e.g. reanimated dead, non-human creatures, magical constructs, fantasy races such as elves or dwarves, alien species). A term naming people by an ability they possess is concept, not species — even if the ability is innate or inherited.
 - description: what this thing is and how it works — a concise unified characterization. Do not enumerate every observed instance or use. Write as a general reference entry, not a scene summary.
 - significance: its narrative role — why it matters to the story, what it changes for characters or the world. This is distinct from description. Leave empty string if not clearly established.
 - known_connections: use actual character names from context, never role descriptors like "protagonist", "subject", or "narrator". Format each entry as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)", "Lord Vance (founder)". One entry per named entity. Empty array if none found.
@@ -898,9 +903,9 @@ You are updating codex entries for a novel based on a new passage.
 The entries below are world-building elements already tracked by the reader.
 
 For each entry that appears in this passage:
-- Rewrite description as a fresh unified synthesis incorporating the existing value and any new information from this passage. Never append — always rewrite as one coherent general characterization. Do not enumerate every observed instance or use; synthesize into a general description of what the thing is and how it works.
+- Rewrite description as a reorganized synthesis: read the existing description and the passage, then write a new version that (1) integrates any genuinely new information from the passage, (2) groups related capabilities or properties thematically rather than in arrival order, and (3) merges or removes redundant sentences. Aim for the shortest version that still captures every distinct fact and capability — if the existing description is already comprehensive and the passage adds nothing new, condense and reorganize rather than expanding. Do not enumerate every observed instance; express specific instances as general capabilities.
 - Update significance only if the passage meaningfully changes or clarifies its narrative role; otherwise preserve unchanged.
-- Extend known_connections with any new ones found in this passage; never duplicate existing entries. Use actual character names from context, never role descriptors like "protagonist" or "subject". Format each as "Name (relationship)" — e.g. "Kira (wielder)", "The Empire (governing body)", "Allomancy (related magic system)". Normalize any existing entries that don't follow this format.
+- Extend known_connections with any new ones found in this passage. Each character or entity must appear exactly once — if a character already listed gains a new role, update their existing entry to combine roles (e.g. "Lord Vance (employer, rival)") rather than adding a duplicate. Use actual character names from context, never role descriptors like "protagonist" or "subject". Format each as "Name (relationship)". Normalize any existing entries that don't follow this format.
 - Extend aliases with any new ones found, including newly encountered derived word forms. Never duplicate.
 - Preserve exactly: name, type, first_appearance_quote.
 

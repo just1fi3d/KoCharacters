@@ -137,6 +137,14 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 if page_num                          then existing[idx].last_seen_page       = page_num    end
                 existing[idx].seen_pages       = UtilsShared.addSeenPage(existing[idx].seen_pages, page_num)
                 existing[idx].defining_moments = UtilsShared.unionArrays(prev_moments, existing[idx].defining_moments)
+                local rel_seen, deduped_rels = {}, {}
+                for _, r in ipairs(existing[idx].relationships or {}) do
+                    if r ~= "" and not rel_seen[r] then
+                        rel_seen[r] = true
+                        table.insert(deduped_rels, r)
+                    end
+                end
+                existing[idx].relationships = deduped_rels
                 changed = true
             else
                 c.id = generateId()
