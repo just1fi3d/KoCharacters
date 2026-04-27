@@ -583,6 +583,11 @@ function UICodex.showBrowser(plugin, type_filter)
     end
 
     local entries = plugin.db_codex:load(book_id)
+    if plugin.db_codex._backup_warning then
+        plugin.db_codex._backup_warning = false
+        plugin:showMsg("⚠ codex.json was corrupt — loaded from backup.\nCheck for missing entries.", 6)
+        return
+    end
     if #entries == 0 then
         plugin:showMsg('No codex entries yet.\nLong-press a word and tap "Track in Codex".')
         return

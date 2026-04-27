@@ -45,6 +45,7 @@ function CodexDB:load(book_md5)
         data = readAndDecode(bak_path)
         if data then
             logger.warn("KoCharacters: codex.json corrupt or missing; recovered from .bak")
+            self._backup_warning = true
         else
             return {}
         end
