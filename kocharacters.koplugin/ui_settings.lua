@@ -142,6 +142,44 @@ function UISettings.open(plugin)
                     help     = "The Gemini model used for all character and codex extraction. Free-tier models are available at no cost but have lower rate limits. Paid models require a billing-enabled API key and offer higher quality or higher throughput.",
                 },
                 {
+                    text_func = function()
+                        local b = G_reader_settings:readSetting("kocharacters_thinking_budget")
+                        if b == nil then b = 512 end
+                        return "Thinking budget: " .. (b == 0 and "off" or tostring(b) .. " tokens")
+                    end,
+                    help = "How many tokens thinking models (e.g. gemini-2.5-flash) can spend on internal reasoning before producing output. Higher values improve synthesis quality but increase response time — set too high and the Kindle's connection will drop. 0 disables thinking entirely. Default: 512.",
+                    callback = function()
+                        local current = G_reader_settings:readSetting("kocharacters_thinking_budget")
+                        if current == nil then current = 512 end
+                        local dialog
+                        dialog = InputDialog:new{
+                            title      = "Thinking budget (tokens)",
+                            input      = tostring(current),
+                            input_type = "number",
+                            description = "0 = off  •  512 = default  •  1024–2048 = higher quality\nValues above ~2000 risk connection timeouts on Kindle.",
+                            buttons    = {{
+                                { text = "Cancel", callback = function() UIManager:close(dialog) end },
+                                {
+                                    text             = "Save",
+                                    is_enter_default = true,
+                                    callback         = function()
+                                        local val = tonumber(dialog:getInputText())
+                                        UIManager:close(dialog)
+                                        if val and val >= 0 then
+                                            G_reader_settings:saveSetting("kocharacters_thinking_budget", val)
+                                            GeminiClient.setThinkingBudget(val)
+                                            UIManager:close(ai_menu)
+                                            openAISettings()
+                                        end
+                                    end,
+                                },
+                            }},
+                        }
+                        UIManager:show(dialog)
+                        dialog:onShowKeyboard()
+                    end,
+                },
+                {
                     text     = "Gemini Image Generation key",
                     callback = function() UISettings.setApiKey(plugin) end,
                     help     = "A separate API key used to generate character portrait images with Google Imagen. Can be the same key as the extraction key, or a different one. Requires Imagen API access on your Google Cloud project.",

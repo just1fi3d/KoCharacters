@@ -354,6 +354,25 @@ function GeminiClient:new(api_key, model)
     }, self)
 end
 
+-- Thinking budget applied to all requests. Thinking models (e.g. gemini-2.5-flash)
+-- consume this many tokens on internal reasoning before producing output. Higher
+-- values improve synthesis quality but increase response latency — the Kindle's
+-- SSL connection drops if a response takes too long. 0 disables thinking entirely.
+-- Default 512 gives a brief reasoning pass without risking a timeout.
+GeminiClient._thinking_budget = 512
+
+function GeminiClient.setThinkingBudget(budget)
+    GeminiClient._thinking_budget = tonumber(budget) or 512
+end
+
+function GeminiClient:_genConfig(temperature, max_tokens)
+    return {
+        temperature     = temperature or 0.2,
+        maxOutputTokens = max_tokens or 8192,
+        thinkingConfig  = { thinkingBudget = GeminiClient._thinking_budget },
+    }
+end
+
 -- Extract text content from a parsed Gemini response envelope; returns text or nil, err
 local function extractCandidateText(parsed)
     local text = parsed.candidates
@@ -394,10 +413,7 @@ end
 function GeminiClient:_post(prompt, temperature, max_tokens)
     local request_body = json.encode({
         contents         = {{ parts = {{ text = prompt }} }},
-        generationConfig = {
-            temperature     = temperature or 0.2,
-            maxOutputTokens = max_tokens  or 8192,
-        },
+        generationConfig = self:_genConfig(temperature, max_tokens),
     })
     local api_url = API_MODELS_BASE .. self.model .. ":generateContent"
     local response_body = {}
@@ -491,13 +507,8 @@ end
 function GeminiClient:buildRequestFile(path, page_text, skip_names, existing_characters, template, book_context)
     local prompt = self:buildPrompt(page_text, skip_names, existing_characters, template, book_context)
     local request_body = json.encode({
-        contents = {
-            { parts = { { text = prompt } } }
-        },
-        generationConfig = {
-            temperature     = 0.2,
-            maxOutputTokens = 8192,
-        }
+        contents         = { { parts = { { text = prompt } } } },
+        generationConfig = self:_genConfig(0.2, 8192),
     })
     local f = io.open(path, "w")
     if not f then return nil, "Could not write request file: " .. path end
@@ -521,8 +532,8 @@ function GeminiClient:buildCodexRequestFile(path, page_text, entries, prompt_tem
     local prompt = sub(tmpl, "{{entries}}", json.encode(entries))
     prompt       = sub(prompt, "{{text}}", page_text)
     local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 8192 },
+        contents         = {{ parts = {{ text = prompt }} }},
+        generationConfig = self:_genConfig(0.2, 8192),
     })
     local f = io.open(path, "w")
     if not f then return nil, "Could not write codex request file: " .. path end
@@ -566,8 +577,8 @@ function GeminiClient:buildCodexCreateRequestFile(path, page_text, name, prompt_
     local prompt = sub(tmpl, "{{name}}", name)
     prompt       = sub(prompt, "{{text}}", page_text)
     local request_body = json.encode({
-        contents = {{ parts = {{ text = prompt }} }},
-        generationConfig = { temperature = 0.2, maxOutputTokens = 4096 },
+        contents         = {{ parts = {{ text = prompt }} }},
+        generationConfig = self:_genConfig(0.2, 4096),
     })
     local f = io.open(path, "w")
     if not f then return nil, "Could not write codex create request file: " .. path end

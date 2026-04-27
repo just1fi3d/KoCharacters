@@ -137,6 +137,7 @@ function KoCharacters:init()
     self:onDispatcherRegisterActions()
     self:setupResources()
     self.ui.menu:registerToMainMenu(self)
+    GeminiClient.setThinkingBudget(G_reader_settings:readSetting("kocharacters_thinking_budget"))
 
     -- Clean up any stale async temp files left by a previous crash/restart.
     local DataStorage = require("datastorage")
