@@ -628,8 +628,9 @@ function UISettings.chooseModel(plugin, on_close)
     for _, m in ipairs(GeminiClient.MODELS) do
         local model = m
         local is_current = (model.id == current)
-        local tier  = model.free_tier and "Free" or "Paid"
-        local label = model.name .. "  [" .. tier .. "]  •  " .. fmt_cost(model) .. " est."
+        local tier    = model.free_tier and "Free" or "Paid"
+        local preview = model.preview and "Preview" or "Stable"
+        local label   = model.name .. "  [" .. tier .. " · " .. preview .. "]  •  " .. fmt_cost(model) .. " est."
         if is_current then label = label .. "  ✓" end
         table.insert(items, {
             text     = label,
