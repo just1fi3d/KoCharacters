@@ -10,6 +10,9 @@ GeminiClient.__index = GeminiClient
 
 local API_MODELS_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
 
+-- thinking: "budget" = Gemini 2.5 models use thinkingBudget (integer tokens)
+--           "level"  = Gemini 3.x models use thinkingLevel ("low" etc.)
+--           false    = no thinking support; thinkingConfig omitted
 GeminiClient.MODELS = {
     {
         id           = "gemini-3.1-flash-lite-preview",
@@ -19,6 +22,7 @@ GeminiClient.MODELS = {
         output_price = 0.750,
         free_tier    = true,
         preview      = true,
+        thinking     = "level",
     },
     {
         id           = "gemini-2.5-flash-lite-preview-09-2025",
@@ -28,6 +32,7 @@ GeminiClient.MODELS = {
         output_price = 0.400,
         free_tier    = true,
         preview      = true,
+        thinking     = "budget",
     },
     {
         id           = "gemini-2.5-flash-lite",
@@ -37,6 +42,7 @@ GeminiClient.MODELS = {
         output_price = 0.200,
         free_tier    = false,
         preview      = false,
+        thinking     = "budget",
     },
     {
         id           = "gemini-2.5-flash",
@@ -46,6 +52,7 @@ GeminiClient.MODELS = {
         output_price = 1.250,
         free_tier    = false,
         preview      = false,
+        thinking     = "budget",
     },
     {
         id           = "gemini-3-flash-preview",
@@ -55,6 +62,7 @@ GeminiClient.MODELS = {
         output_price = 1.500,
         free_tier    = false,
         preview      = true,
+        thinking     = "level",
     },
     {
         id           = "gemini-3.1-pro-preview",
@@ -64,6 +72,7 @@ GeminiClient.MODELS = {
         output_price = 6.000,
         free_tier    = false,
         preview      = true,
+        thinking     = "level",
     },
 }
 GeminiClient.DEFAULT_MODEL = GeminiClient.MODELS[1].id
@@ -365,12 +374,26 @@ function GeminiClient.setThinkingBudget(budget)
     GeminiClient._thinking_budget = tonumber(budget) or 512
 end
 
+function GeminiClient:_modelInfo()
+    for _, m in ipairs(GeminiClient.MODELS) do
+        if m.id == self.model then return m end
+    end
+    return nil
+end
+
 function GeminiClient:_genConfig(temperature, max_tokens)
-    return {
+    local config = {
         temperature     = temperature or 0.2,
         maxOutputTokens = max_tokens or 8192,
-        thinkingConfig  = { thinkingBudget = GeminiClient._thinking_budget },
     }
+    local budget   = GeminiClient._thinking_budget
+    local thinking = (self:_modelInfo() or {}).thinking
+    if thinking == "budget" then
+        config.thinkingConfig = { thinkingBudget = budget }
+    elseif thinking == "level" and budget > 0 then
+        config.thinkingConfig = { thinkingLevel = "low" }
+    end
+    return config
 end
 
 -- Extract text content from a parsed Gemini response envelope; returns text or nil, err
