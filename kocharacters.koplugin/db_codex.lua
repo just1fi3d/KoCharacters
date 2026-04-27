@@ -28,12 +28,28 @@ function CodexDB:dbPath(book_md5)
 end
 
 function CodexDB:load(book_md5)
-    local path = self:dbPath(book_md5)
-    local f = io.open(path, "r")
-    if not f then return {} end
-    local content = f:read("*a"); f:close()
-    local data, _, err = json.decode(content)
-    if not data then return {} end
+    local path     = self:dbPath(book_md5)
+    local bak_path = path .. ".bak"
+
+    local function readAndDecode(p)
+        local f = io.open(p, "r")
+        if not f then return nil end
+        local content = f:read("*a"); f:close()
+        local data = json.decode(content)
+        return data
+    end
+
+    local data = readAndDecode(path)
+    if not data then
+        -- Main file missing or corrupt — try backup
+        data = readAndDecode(bak_path)
+        if data then
+            logger.warn("KoCharacters: codex.json corrupt or missing; recovered from .bak")
+        else
+            return {}
+        end
+    end
+
     local needs_save = false
     for _, e in ipairs(data) do
         if not e.id or e.id == "" then
@@ -49,7 +65,19 @@ function CodexDB:save(book_md5, entries)
     for _, e in ipairs(entries) do
         if not e.id or e.id == "" then e.id = generateId() end
     end
-    local path = self:dbPath(book_md5)
+    local path     = self:dbPath(book_md5)
+    local bak_path = path .. ".bak"
+
+    -- Promote current file to .bak only if it is valid JSON (never overwrite a good
+    -- backup with corrupt data).
+    local f_check = io.open(path, "r")
+    if f_check then
+        local existing = f_check:read("*a"); f_check:close()
+        if json.decode(existing) then
+            os.rename(path, bak_path)
+        end
+    end
+
     local f = io.open(path, "w")
     if not f then return false, "Cannot write to " .. path end
     f:write(json.encode(entries, { indent = true }))
