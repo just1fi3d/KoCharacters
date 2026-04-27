@@ -159,6 +159,7 @@ function KoCharacters:init()
         db_codex    = self.db_codex,
         ui          = self.ui,
         get_api_key           = function() return self_ref:getApiKey() end,
+        get_model             = function() return self_ref:getGeminiModel() end,
         get_prompt            = function() return self_ref:getExtractionPrompt() end,
         get_codex_update_prompt = function() return self_ref:getCodexUpdatePrompt() end,
         get_book_id           = function() return self_ref:getBookID() end,
@@ -494,6 +495,11 @@ function KoCharacters:getCrossReferencePrompt()
         or GeminiClient.DEFAULT_CROSS_REFERENCE_PROMPT
 end
 
+function KoCharacters:getGeminiModel()
+    return G_reader_settings:readSetting("kocharacters_gemini_model")
+        or GeminiClient.DEFAULT_MODEL
+end
+
 function KoCharacters:recordUsage(usage)
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
@@ -662,7 +668,7 @@ function KoCharacters:onTrackInCodex(word)
     local resp_file   = tmp_dir .. "/.codex_create_resp.json"
     os.remove(resp_file)
 
-    local client        = GeminiClient:new(api_key)
+    local client        = GeminiClient:new(api_key, self:getGeminiModel())
     local ok, build_err = client:buildCodexCreateRequestFile(req_file, page_text, word, self:getCodexCreatePrompt())
     if not ok then
         self:showMsg("Codex: failed to build request: " .. tostring(build_err))
@@ -749,7 +755,7 @@ function KoCharacters:onEnrichCodexFromPage()
     UIManager:show(working)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
+    local client = GeminiClient:new(api_key, self:getGeminiModel())
     local updated, err, usage = client:enrichCodexEntries(page_text, entries, self:getCodexUpdatePrompt())
     UIManager:close(working)
 

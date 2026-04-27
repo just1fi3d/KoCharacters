@@ -1,6 +1,5 @@
 -- gemini_client.lua
--- Handles all communication with the Google Gemini API (free tier)
--- Model: gemini-3.1-flash-lite-preview — free at aistudio.google.com
+-- Handles all communication with the Google Gemini API
 
 local json  = require("dkjson")
 local https = require("ssl.https")
@@ -9,9 +8,43 @@ local ltn12 = require("ltn12")
 local GeminiClient = {}
 GeminiClient.__index = GeminiClient
 
-local MODEL        = "gemini-3.1-flash-lite-preview"
-local API_BASE     = "https://generativelanguage.googleapis.com/v1beta/models/" .. MODEL .. ":generateContent"
 local API_MODELS_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+
+GeminiClient.MODELS = {
+    {
+        id           = "gemini-3.1-flash-lite-preview",
+        name         = "3.1 Flash-Lite",
+        description  = "Most cost-efficient; best for high-volume extraction. Free tier available, but preview rate limits can cause 503 errors under high demand.",
+        input_price  = 0.125,
+        output_price = 0.750,
+        free_tier    = true,
+    },
+    {
+        id           = "gemini-2.5-flash-lite-preview-09-2025",
+        name         = "2.5 Flash-Lite",
+        description  = "Cost-efficient 2.5-generation model with a free tier. Different demand pool from 3.x preview models, which may reduce 503 errors.",
+        input_price  = 0.100,
+        output_price = 0.400,
+        free_tier    = true,
+    },
+    {
+        id           = "gemini-3-flash-preview",
+        name         = "3 Flash",
+        description  = "Frontier intelligence at Flash speed. Noticeably better personality synthesis, motivation inference, and relationship nuance. Paid tier only.",
+        input_price  = 0.250,
+        output_price = 1.500,
+        free_tier    = false,
+    },
+    {
+        id           = "gemini-3.1-pro-preview",
+        name         = "3.1 Pro",
+        description  = "Maximum quality across all character fields. Best for complex fiction with large casts. Paid tier only.",
+        input_price  = 1.000,
+        output_price = 6.000,
+        free_tier    = false,
+    },
+}
+GeminiClient.DEFAULT_MODEL = GeminiClient.MODELS[1].id
 
 -- Safe placeholder substitution (handles % in values correctly)
 local function sub(s, placeholder, value)
@@ -292,8 +325,11 @@ Character profile to clean:
 {{character}}
 ]]
 
-function GeminiClient:new(api_key)
-    return setmetatable({ api_key = api_key }, self)
+function GeminiClient:new(api_key, model)
+    return setmetatable({
+        api_key = api_key,
+        model   = model or GeminiClient.DEFAULT_MODEL,
+    }, self)
 end
 
 -- Extract text content from a parsed Gemini response envelope; returns text or nil, err
@@ -341,9 +377,10 @@ function GeminiClient:_post(prompt, temperature, max_tokens)
             maxOutputTokens = max_tokens  or 8192,
         },
     })
+    local api_url = API_MODELS_BASE .. self.model .. ":generateContent"
     local response_body = {}
     local ok, status = https.request({
-        url    = API_BASE .. "?key=" .. self.api_key,
+        url    = api_url .. "?key=" .. self.api_key,
         method = "POST",
         headers = {
             ["Content-Type"]   = "application/json",
@@ -548,7 +585,7 @@ end
 
 -- Returns the full extraction API URL with key for use in async curl commands
 function GeminiClient:asyncExtractUrl()
-    return API_BASE .. "?key=" .. self.api_key
+    return API_MODELS_BASE .. self.model .. ":generateContent?key=" .. self.api_key
 end
 
 -- Send request to Gemini and return parsed character list or error
@@ -1000,7 +1037,7 @@ end
 
 -- Fetch model metadata from the Gemini models endpoint
 function GeminiClient:fetchModelInfo()
-    local url = API_MODELS_BASE .. MODEL .. "?key=" .. self.api_key
+    local url = API_MODELS_BASE .. self.model .. "?key=" .. self.api_key
     local response_body = {}
     local ok, status = https.request({
         url     = url,

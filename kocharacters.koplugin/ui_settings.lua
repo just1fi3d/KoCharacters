@@ -125,6 +125,23 @@ function UISettings.open(plugin)
                     help     = "API key used for character extraction, cleanup, reanalysis, and relationship mapping. Get a free key at aistudio.google.com.\n\nFree tier limits: 15 requests/min, 500 requests/day, 250 000 tokens/min.",
                 },
                 {
+                    text_func = function()
+                        local id = G_reader_settings:readSetting("kocharacters_gemini_model")
+                                   or GeminiClient.DEFAULT_MODEL
+                        for _, m in ipairs(GeminiClient.MODELS) do
+                            if m.id == id then return "Gemini model: " .. m.name end
+                        end
+                        return "Gemini model: " .. id
+                    end,
+                    callback = function()
+                        UISettings.chooseModel(plugin, function()
+                            UIManager:close(ai_menu)
+                            openAISettings()
+                        end)
+                    end,
+                    help     = "The Gemini model used for all character and codex extraction. Free-tier models are available at no cost but have lower rate limits. Paid models require a billing-enabled API key and offer higher quality or higher throughput.",
+                },
+                {
                     text     = "Gemini Image Generation key",
                     callback = function() UISettings.setApiKey(plugin) end,
                     help     = "A separate API key used to generate character portrait images with Google Imagen. Can be the same key as the extraction key, or a different one. Requires Imagen API access on your Google Cloud project.",
@@ -566,6 +583,79 @@ function UISettings.open(plugin)
 end
 
 -- ---------------------------------------------------------------------------
+-- Model selector
+-- ---------------------------------------------------------------------------
+
+function UISettings.chooseModel(plugin, on_close)
+    local GeminiClient = require("gemini_client")
+    local json         = require("dkjson")
+    local DataStorage  = require("datastorage")
+    local Menu         = require("ui/widget/menu")
+
+    local path = DataStorage:getDataDir() .. "/kocharacters/usage_stats.json"
+    local tot_prompt, tot_output = 0, 0
+    local f = io.open(path, "r")
+    if f then
+        local stats = json.decode(f:read("*all")) or {}
+        f:close()
+        for _, d in pairs(stats) do
+            tot_prompt = tot_prompt + (d.prompt_tokens or 0)
+            tot_output = tot_output + (d.output_tokens or 0)
+        end
+    end
+
+    local current = G_reader_settings:readSetting("kocharacters_gemini_model")
+                    or GeminiClient.DEFAULT_MODEL
+
+    local function fmt_cost(m)
+        local c = (tot_prompt / 1e6 * m.input_price) + (tot_output / 1e6 * m.output_price)
+        return string.format("$%.2f", c)
+    end
+
+    local function build_help(m)
+        return m.name .. "\n\n"
+            .. m.description .. "\n\n"
+            .. "Pricing (per 1M tokens):\n"
+            .. string.format("  Input:  $%.3f\n", m.input_price)
+            .. string.format("  Output: $%.3f\n", m.output_price)
+            .. "\nYour total usage: "
+            .. tot_prompt .. " input + " .. tot_output .. " output tokens\n"
+            .. "Estimated spend at this model's rates: " .. fmt_cost(m)
+    end
+
+    local model_menu
+    local items = {}
+    for _, m in ipairs(GeminiClient.MODELS) do
+        local model = m
+        local is_current = (model.id == current)
+        local tier  = model.free_tier and "Free" or "Paid"
+        local label = model.name .. "  [" .. tier .. "]  •  " .. fmt_cost(model) .. " est."
+        if is_current then label = label .. "  ✓" end
+        table.insert(items, {
+            text     = label,
+            help     = build_help(model),
+            callback = function()
+                G_reader_settings:saveSetting("kocharacters_gemini_model", model.id)
+                UIManager:close(model_menu)
+                if on_close then on_close() end
+            end,
+        })
+    end
+
+    model_menu = Menu:new{
+        title      = "Select Gemini Model",
+        item_table = items,
+        width      = Screen:getWidth(),
+        show_parent = plugin.ui,
+        onMenuHold  = function(_, item)
+            if item and item.help then
+                UIManager:show(InfoMessage:new{ text = item.help })
+            end
+        end,
+    }
+    UIManager:show(model_menu)
+end
+
 -- API usage viewer
 -- ---------------------------------------------------------------------------
 

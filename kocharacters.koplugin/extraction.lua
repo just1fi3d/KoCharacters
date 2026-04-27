@@ -48,6 +48,7 @@ end
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
 --   get_api_key              (function) — returns current Gemini API key string
+--   get_model                (function) — returns current Gemini model ID string
 --   get_prompt               (function) — returns current extraction prompt string
 --   get_codex_update_prompt  (function) — returns current codex update prompt string
 --   get_book_id   (function) — returns current book ID or nil
@@ -64,6 +65,7 @@ function Extraction.new(deps)
     self.ui       = deps.ui
     -- Mutable/behavioural deps
     self._get_api_key              = deps.get_api_key
+    self._get_model                = deps.get_model
     self._get_prompt               = deps.get_prompt
     self._get_codex_update_prompt  = deps.get_codex_update_prompt
     self._get_book_id              = deps.get_book_id
@@ -473,7 +475,7 @@ function Extraction:_processCharacterJob(job, book_id)
     os.remove(self._curl_resp_file)
 
     local api_key    = self._get_api_key()
-    local client     = GeminiClient:new(api_key)
+    local client     = GeminiClient:new(api_key, self._get_model())
     local ok, build_err = client:buildRequestFile(
         self._curl_req_file, page_text, skip_names, chars_in_text,
         self._get_prompt(), self.db:loadBookContext(book_id))
@@ -633,7 +635,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
     self:showScanIndicator()
 
     local api_key     = self._get_api_key()
-    local client      = GeminiClient:new(api_key)
+    local client      = GeminiClient:new(api_key, self._get_model())
     local DataStorage = require("datastorage")
     local tmp_dir     = DataStorage:getDataDir() .. "/kocharacters"
     local req_file    = tmp_dir .. "/.codex_req_"  .. tostring(pageno) .. ".json"
@@ -785,7 +787,7 @@ function Extraction:autoExtract(page_num)
         else table.insert(skip_names, c.name) end
     end
 
-    local client = GeminiClient:new(api_key)
+    local client = GeminiClient:new(api_key, self._get_model())
     local characters, api_err, usage, book_context
     local ok, call_err = pcall(function()
         characters, api_err, usage, book_context = client:extractCharacters(
@@ -871,7 +873,7 @@ function Extraction:onScanPendingPages(book_id)
     if #pages == 0 then self._show_msg("No offline-pending pages."); return end
     table.sort(pages)
 
-    local client      = GeminiClient:new(self._get_api_key())
+    local client      = GeminiClient:new(self._get_api_key(), self._get_model())
     local scanned_ok  = {}
     local total_found = 0
     local total       = #pages
@@ -1030,7 +1032,7 @@ function Extraction:onExtractCurrentPage()
         end
         logger.info("KoCharacters: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
 
-        local client = GeminiClient:new(api_key)
+        local client = GeminiClient:new(api_key, self._get_model())
         local characters, err, usage, book_context
         local ok, call_err = pcall(function()
             characters, err, usage, book_context = client:extractCharacters(
@@ -1230,7 +1232,7 @@ end
 function Extraction:doChapterScan(book_id, start_page, end_page)
     local PAGES_PER_BATCH = 4
 
-    local client         = GeminiClient:new(self._get_api_key())
+    local client         = GeminiClient:new(self._get_api_key(), self._get_model())
     local scanned        = self.db:loadScannedPages(book_id)
     local page_count     = end_page - start_page + 1
     local total_batches  = math.ceil(page_count / PAGES_PER_BATCH)
