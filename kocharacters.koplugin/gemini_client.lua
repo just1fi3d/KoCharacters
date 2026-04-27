@@ -22,7 +22,7 @@ GeminiClient.MODELS = {
         output_price = 0.750,
         free_tier    = true,
         preview      = true,
-        thinking     = "level",
+        thinking     = false,
     },
     {
         id           = "gemini-2.5-flash-lite-preview-09-2025",
@@ -32,7 +32,7 @@ GeminiClient.MODELS = {
         output_price = 0.400,
         free_tier    = true,
         preview      = true,
-        thinking     = "budget",
+        thinking     = false,
     },
     {
         id           = "gemini-2.5-flash-lite",
@@ -42,7 +42,7 @@ GeminiClient.MODELS = {
         output_price = 0.200,
         free_tier    = false,
         preview      = false,
-        thinking     = "budget",
+        thinking     = false,
     },
     {
         id           = "gemini-2.5-flash",

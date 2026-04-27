@@ -147,15 +147,12 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
         UIManager:show(working_msg)
         UIManager:forceRePaint()
 
-        local client = GeminiClient:new(plugin:getApiKey())
-        local cleaned, err, usage1
-        local ok, call_err = pcall(function()
-            cleaned, err, usage1 = client:cleanCharacters(enriched_chars, plugin:getCharactersCleanupPrompt())
-        end)
-        UIManager:close(working_msg)
-        if ok and not err then plugin:recordUsage(usage1) end
+        local client = plugin:makeGeminiClient()
+        local cleaned = UIShared.callApi(plugin, function()
+            return client:cleanCharacters(enriched_chars, plugin:getCharactersCleanupPrompt())
+        end, working_msg)
 
-        if ok and not err and cleaned and type(cleaned) == "table" then
+        if cleaned and type(cleaned) == "table" then
             local all_chars = plugin.db:load(book_id)
             local changed   = false
             for i, cc in ipairs(cleaned) do
@@ -897,8 +894,7 @@ function UICharacter.onCleanupAllCharacters(plugin)
         return
     end
 
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -913,7 +909,7 @@ function UICharacter.onCleanupAllCharacters(plugin)
     local BATCH_SIZE = G_reader_settings:readSetting("kocharacters_cleanup_batch_size") or 5
 
     local function runCleanup(chars_to_clean)
-        local client    = GeminiClient:new(api_key)
+        local client    = plugin:makeGeminiClient()
         local all_chars = plugin.db:load(book_id)
         local changed   = false
         local total     = #chars_to_clean
@@ -1035,8 +1031,7 @@ function UICharacter.onMergeDetection(plugin)
     local book_id = plugin:getBookID()
     if not book_id then return end
 
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -1054,7 +1049,7 @@ function UICharacter.onMergeDetection(plugin)
     local slim_chars = {}
     for _, c in ipairs(all_chars) do table.insert(slim_chars, toSlimChar(c)) end
 
-    local client = GeminiClient:new(api_key)
+    local client = plugin:makeGeminiClient()
     local groups = UIShared.callApi(plugin, function()
         return client:detectMergeGroups(slim_chars, plugin:getMergeDetectionPrompt())
     end, detect_msg)
@@ -1136,8 +1131,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function UICharacter.onDetectUnnamedMatches(plugin, book_id, on_done)
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         if on_done then on_done() end
         return
     end
@@ -1158,24 +1152,10 @@ function UICharacter.onDetectUnnamedMatches(plugin, book_id, on_done)
     UIManager:show(detect_msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
-    local groups, derr, dusage
-    local dok, dcall_err = pcall(function()
-        groups, derr, dusage = client:detectUnnamedMatches(unnamed, named, plugin:getUnnamedMatchPrompt())
-    end)
-    UIManager:close(detect_msg)
-    if dok and not derr then plugin:recordUsage(dusage) end
-
-    if not dok then
-        plugin:showMsg("Plugin error:\n" .. tostring(dcall_err), 8)
-        if on_done then on_done() end
-        return
-    end
-    if derr then
-        plugin:showMsg("Gemini error:\n" .. tostring(derr), 8)
-        if on_done then on_done() end
-        return
-    end
+    local client = plugin:makeGeminiClient()
+    local groups = UIShared.callApi(plugin, function()
+        return client:detectUnnamedMatches(unnamed, named, plugin:getUnnamedMatchPrompt())
+    end, detect_msg)
     if not groups or #groups == 0 then
         if on_done then on_done() end
         return
@@ -1258,8 +1238,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function UICharacter.onReanalyzeCharacter(plugin, book_id, char)
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -1274,7 +1253,7 @@ function UICharacter.onReanalyzeCharacter(plugin, book_id, char)
     UIManager:show(working_msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
+    local client = plugin:makeGeminiClient()
     local characters = UIShared.callApi(plugin, function()
         return client:reanalyzeCharacter(page_text, char, plugin:getReanalyzePrompt())
     end, working_msg)
@@ -1326,8 +1305,7 @@ function UICharacter.onReanalyzeCharacterPicker(plugin)
 end
 
 function UICharacter.onCleanCharacter(plugin, book_id, char_name)
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -1343,7 +1321,7 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     UIManager:show(working_msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
+    local client = plugin:makeGeminiClient()
     local result = UIShared.callApi(plugin, function()
         return client:cleanCharacter(char, plugin:getCleanupPrompt())
     end, working_msg)
@@ -1477,8 +1455,7 @@ function UICharacter.onPropagateCrossReferences(plugin)
         plugin:showMsg("Not enough characters to cross-reference.", 3)
         return
     end
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -1487,7 +1464,7 @@ function UICharacter.onPropagateCrossReferences(plugin)
     UIManager:show(working_msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
+    local client = plugin:makeGeminiClient()
     local updates = UIShared.callApi(plugin, function()
         return client:propagateCrossReferences(characters, plugin:getCrossReferencePrompt())
     end, working_msg)
@@ -1562,8 +1539,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function UICharacter.onViewRelationshipMap(plugin)
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -1584,23 +1560,11 @@ function UICharacter.onViewRelationshipMap(plugin)
     UIManager:show(working_msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
-    local map_text, err, usage
-    local ok, call_err = pcall(function()
-        map_text, err, usage = client:buildRelationshipMap(characters, plugin:getRelationshipMapPrompt())
-    end)
-
-    UIManager:close(working_msg)
-    if ok and not err then plugin:recordUsage(usage) end
-
-    if not ok then
-        plugin:showMsg("Plugin error:\n" .. tostring(call_err), 8)
-        return
-    end
-    if err then
-        plugin:showMsg("Gemini error:\n" .. tostring(err), 8)
-        return
-    end
+    local client = plugin:makeGeminiClient()
+    local map_text = UIShared.callApi(plugin, function()
+        return client:buildRelationshipMap(characters, plugin:getRelationshipMapPrompt())
+    end, working_msg)
+    if not map_text then return end
 
     UIManager:show(TextViewer:new{
         title  = "Relationship Map — " .. plugin:getBookTitle(),

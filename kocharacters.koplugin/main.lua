@@ -501,6 +501,10 @@ function KoCharacters:getGeminiModel()
         or GeminiClient.DEFAULT_MODEL
 end
 
+function KoCharacters:makeGeminiClient()
+    return GeminiClient:new(self:getApiKey(), self:getGeminiModel())
+end
+
 function KoCharacters:recordUsage(usage)
     local json        = require("dkjson")
     local DataStorage = require("datastorage")
@@ -669,7 +673,7 @@ function KoCharacters:onTrackInCodex(word)
     local resp_file   = tmp_dir .. "/.codex_create_resp.json"
     os.remove(resp_file)
 
-    local client        = GeminiClient:new(api_key, self:getGeminiModel())
+    local client        = self:makeGeminiClient()
     local ok, build_err = client:buildCodexCreateRequestFile(req_file, page_text, word, self:getCodexCreatePrompt())
     if not ok then
         self:showMsg("Codex: failed to build request: " .. tostring(build_err))
@@ -756,7 +760,7 @@ function KoCharacters:onEnrichCodexFromPage()
     UIManager:show(working)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key, self:getGeminiModel())
+    local client = self:makeGeminiClient()
     local updated, err, usage = client:enrichCodexEntries(page_text, entries, self:getCodexUpdatePrompt())
     UIManager:close(working)
 

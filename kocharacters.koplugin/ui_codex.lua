@@ -704,8 +704,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function UICodex.onCleanupEntry(plugin, book_id, entry, refresh_browser_fn)
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
@@ -715,7 +714,7 @@ function UICodex.onCleanupEntry(plugin, book_id, entry, refresh_browser_fn)
     UIManager:show(msg)
     UIManager:forceRePaint()
 
-    local client = GeminiClient:new(api_key)
+    local client = plugin:makeGeminiClient()
     local cleaned, err, usage
     local ok, call_err = pcall(function()
         cleaned, err, usage = client:cleanCodexEntries({ entry }, plugin:getCodexCleanupPrompt())
@@ -766,14 +765,13 @@ function UICodex.onCleanupAllEntries(plugin)
         return
     end
 
-    local api_key = plugin:getApiKey()
-    if api_key == "" then
+    if plugin:getApiKey() == "" then
         plugin:showMsg("No Gemini API key set.\nGo to KoCharacters > Settings.")
         return
     end
 
     local BATCH_SIZE = 5
-    local client     = GeminiClient:new(api_key)
+    local client     = plugin:makeGeminiClient()
     local total      = #entries
     local i          = 1
     local progress_msg
