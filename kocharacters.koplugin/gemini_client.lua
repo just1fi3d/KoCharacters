@@ -28,6 +28,22 @@ GeminiClient.MODELS = {
         free_tier    = true,
     },
     {
+        id           = "gemini-2.5-flash-lite",
+        name         = "2.5 Flash-Lite",
+        description  = "Stable (non-preview) model — no 503 high-demand errors. Cheapest paid option. Quality comparable to the 3.1 Flash-Lite preview. Requires a billing-enabled API key.",
+        input_price  = 0.050,
+        output_price = 0.200,
+        free_tier    = false,
+    },
+    {
+        id           = "gemini-2.5-flash",
+        name         = "2.5 Flash",
+        description  = "Stable model with hybrid reasoning. Noticeably better personality synthesis and relationship nuance than Flash-Lite. No 503 errors. Requires a billing-enabled API key.",
+        input_price  = 0.150,
+        output_price = 1.250,
+        free_tier    = false,
+    },
+    {
         id           = "gemini-3-flash-preview",
         name         = "3 Flash",
         description  = "Frontier intelligence at Flash speed. Noticeably better personality synthesis, motivation inference, and relationship nuance. Paid tier only.",
