@@ -97,22 +97,34 @@ function Portrait.generate(plugin, book_id, char)
     os.remove(req_file)
 
     local f = io.open(resp_file, "r")
-    if not f then return "No response from Imagen API." end
+    if not f then
+        plugin:appendActivityLog(book_id, "Portrait failed for " .. name .. ": no response from Imagen API")
+        return "No response from Imagen API."
+    end
     local raw = f:read("*a")
     f:close()
     os.remove(resp_file)
 
     local parsed = json.decode(raw)
-    if not parsed then return "Could not parse Imagen response:\n" .. raw:sub(1, 200) end
+    if not parsed then
+        plugin:appendActivityLog(book_id, "Portrait parse error for " .. name .. ": " .. raw:sub(1, 300))
+        return "Could not parse Imagen response:\n" .. raw:sub(1, 300)
+    end
     if parsed.error then
-        return "Imagen error:\n" .. (parsed.error.message or json.encode(parsed.error))
+        local msg = parsed.error.message or json.encode(parsed.error)
+        plugin:appendActivityLog(book_id, "Portrait failed for " .. name .. ": " .. msg)
+        return "Imagen error:\n" .. msg
     end
 
-    local b64 = parsed.predictions
-                and parsed.predictions[1]
-                and parsed.predictions[1].bytesBase64Encoded
+    local prediction = parsed.predictions and parsed.predictions[1]
+    local b64 = prediction and prediction.bytesBase64Encoded
     if not b64 or b64 == "" then
-        return "Imagen returned no image.\n" .. raw:sub(1, 200)
+        local reason = prediction and prediction.raiFilteredReason
+        local err_msg = reason
+            and ("Portrait blocked by safety filter: " .. reason)
+            or  ("Imagen returned no image.\n" .. raw:sub(1, 300))
+        plugin:appendActivityLog(book_id, "Portrait failed for " .. name .. ": " .. err_msg)
+        return err_msg
     end
 
     local tmp_b64 = portraits_dir .. "/.tmp_b64"
@@ -130,6 +142,7 @@ function Portrait.generate(plugin, book_id, char)
     char.portrait_file = portrait_filename
     plugin.db:updateCharacter(book_id, char.name, char)
     plugin:recordUsage({ images = 1 })
+    plugin:appendActivityLog(book_id, "Portrait generated for " .. name)
     return nil
 end
 
@@ -311,22 +324,34 @@ function Portrait.generateCodex(plugin, book_id, entry)
     os.remove(req_file)
 
     local f = io.open(resp_file, "r")
-    if not f then return "No response from Imagen API." end
+    if not f then
+        plugin:appendActivityLog(book_id, "Codex portrait failed for " .. name .. ": no response from Imagen API")
+        return "No response from Imagen API."
+    end
     local raw = f:read("*a")
     f:close()
     os.remove(resp_file)
 
     local parsed = json.decode(raw)
-    if not parsed then return "Could not parse Imagen response:\n" .. raw:sub(1, 200) end
+    if not parsed then
+        plugin:appendActivityLog(book_id, "Codex portrait parse error for " .. name .. ": " .. raw:sub(1, 300))
+        return "Could not parse Imagen response:\n" .. raw:sub(1, 300)
+    end
     if parsed.error then
-        return "Imagen error:\n" .. (parsed.error.message or json.encode(parsed.error))
+        local msg = parsed.error.message or json.encode(parsed.error)
+        plugin:appendActivityLog(book_id, "Codex portrait failed for " .. name .. ": " .. msg)
+        return "Imagen error:\n" .. msg
     end
 
-    local b64 = parsed.predictions
-                and parsed.predictions[1]
-                and parsed.predictions[1].bytesBase64Encoded
+    local prediction = parsed.predictions and parsed.predictions[1]
+    local b64 = prediction and prediction.bytesBase64Encoded
     if not b64 or b64 == "" then
-        return "Imagen returned no image.\n" .. raw:sub(1, 200)
+        local reason = prediction and prediction.raiFilteredReason
+        local err_msg = reason
+            and ("Portrait blocked by safety filter: " .. reason)
+            or  ("Imagen returned no image.\n" .. raw:sub(1, 300))
+        plugin:appendActivityLog(book_id, "Codex portrait failed for " .. name .. ": " .. err_msg)
+        return err_msg
     end
 
     local tmp_b64 = portraits_dir .. "/.tmp_b64"
@@ -340,6 +365,7 @@ function Portrait.generateCodex(plugin, book_id, entry)
     if ret ~= 0 then return "Failed to decode portrait image." end
 
     plugin:recordUsage({ images = 1 })
+    plugin:appendActivityLog(book_id, "Codex portrait generated for " .. name)
     return nil
 end
 
