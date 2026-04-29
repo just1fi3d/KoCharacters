@@ -116,12 +116,12 @@ Rules:
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
 - For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Sam" is confirmed to be "Sam Carter"), use the full name and put the short name in aliases.
-- For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations from this passage into one coherent summary. Do NOT append sentences to the existing text. Do NOT list events or actions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
+- For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into at most 3–4 sentences. Do NOT append sentences to the existing text. Do NOT list events, actions, or scene-specific emotional reactions.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
-- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise statement ("wants to avenge her brother's death", "fears becoming like her father"). Never write this as a plot summary. Fill only when there is textual evidence of a specific goal, fear, or belief — do not fabricate motivation from role alone. Use empty string if none is established.
+- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise summary of the character's deepest goals and fears — at most 3–4 sentences. If the existing motivation already captures the core drives, preserve it unchanged. Never list scene-level objectives as separate items. Fill only when there is textual evidence of a specific goal, fear, or belief — do not fabricate from role alone. Use empty string if none is established.
 - For occupation: use the character's formal role, title, or profession. If not explicitly stated, infer from context or established identity (e.g. if the text establishes someone is a paladin or a general, use that). Do not leave blank simply because identity_tags already captures the role.
 - For defining_moments: only capture a "One-Way Door" event — one after which the character's status, body, or knowledge is permanently altered.
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
@@ -220,13 +220,13 @@ Read the passage below and update the character's profile.
 - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Rules:
-- For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Do NOT append. Never list events or actions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile.
+- For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into at most 3–4 sentences. Do NOT append. Never list events, actions, or scene-specific emotional reactions.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
 - Never append raw actions or scene summaries to any field.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For defining_moments: ask two questions: (1) Is this a "One-Way Door"? Is the character's status, body, or knowledge permanently altered? (2) Is this a genuinely novel category of event not yet captured in the existing entries? Only append if both answers are yes. If the same broad type of experience or situation is already recorded, do not add a new entry — additional instances are not a new One-Way Door unless they produce a fundamentally new permanent outcome not captured by the existing entry. Append only; never remove existing entries.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). Only include abilities the text explicitly establishes or acknowledges — never infer from personality. Otherwise preserve unchanged.
-- For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Otherwise preserve unchanged.
+- For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. If updating, write as a concise summary of the character's deepest goals and fears — at most 3–4 sentences; synthesize, never list scene-level objectives as separate items. If the existing motivation already captures the core drives, preserve it unchanged.
 - For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
 
@@ -314,11 +314,12 @@ You are cleaning up a character profile from a book. Some text fields contain re
 Clean up each text field:
 - Remove repetitions and redundant phrases
 - Combine fragmented observations into a single fluent description
-- If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
+- If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to at most 3–4 sentences; if it is already a focused trait description within that length, preserve it.
+- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: consolidate entries that describe the same category of recurring event — if multiple entries cover the same broad type of action, experience, or situation, even if worded as different mechanisms or sessions, merge them into one using the most complete phrasing. Then remove any remaining exact duplicates. Ensure each remaining entry reads as a permanent state change, not a scene description.
-- For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
+- For motivation: synthesize into a concise summary of the character's deepest goals and fears — at most 3–4 sentences. Collapse multiple accumulated items into the core drives; never list scene-level objectives as separate items. If it is already a focused summary of core drives within that length, preserve it.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
@@ -634,7 +635,13 @@ function GeminiClient:parseCodexCreateResponseFile(path)
     if not entry then
         return nil, "Gemini returned invalid JSON: " .. tostring(jerr) .. "\nRaw: " .. text:sub(1, 200)
     end
-    if type(entry) ~= "table" or type(entry.name) ~= "string" then
+    if type(entry) ~= "table" then
+        return nil, "Expected a JSON object with a name field"
+    end
+    if entry.error == "individual_character" then
+        return nil, "individual_character"
+    end
+    if type(entry.name) ~= "string" then
         return nil, "Expected a JSON object with a name field"
     end
     return entry, nil, extractUsage(parsed)
@@ -696,11 +703,12 @@ You are cleaning up character profiles from a book. Some text fields contain rep
 For each character, clean up the text fields:
 - Remove repetitions and redundant phrases
 - Combine fragmented observations into fluent descriptions
-- If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened")
+- If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to at most 3–4 sentences; if it is already a focused trait description within that length, preserve it.
+- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
 - For defining_moments: consolidate entries that describe the same category of recurring event — if multiple entries cover the same broad type of action, experience, or situation, even if worded as different mechanisms or sessions, merge them into one using the most complete phrasing. Then remove any remaining exact duplicates. Ensure each remaining entry reads as a permanent state change, not a scene description.
-- For motivation: if multiple motivations have accumulated, synthesise into one coherent statement.
+- For motivation: synthesize into a concise summary of the character's deepest goals and fears — at most 3–4 sentences. Collapse multiple accumulated items into the core drives; never list scene-level objectives as separate items. If it is already a focused summary of core drives within that length, preserve it.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person — if a shortened name in a relationship (e.g. "Helena") matches a character who appears by full name elsewhere in this batch (e.g. "Helena Marino"), expand it to the full name.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
@@ -947,6 +955,7 @@ Your tasks:
 2. Populate a codex entry based on the passage.
 
 Rules:
+- If "{{name}}" is the proper name of a specific individual person or character in the story (as opposed to a practitioner title, faction, or species), do not create an entry — return: {"error": "individual_character"} and nothing else.
 - name: capitalize as a proper noun or world-specific term (e.g. "Resonance", "Transference", "The Iron Guild"). Use title case for multi-word names.
 - type: classify as — place (locations, regions, buildings), faction (organizations, groups, institutions), concept (abilities, systems, phenomena, abstract forces, and practitioner roles defined by what someone can do), object (physical items or artifacts), or species (beings biologically or fundamentally distinct from ordinary humans, e.g. reanimated dead, non-human creatures, magical constructs, fantasy races such as elves or dwarves, alien species). A term naming people by an ability they possess is concept, not species — even if the ability is innate or inherited.
 - description: what this thing is and how it works — a concise unified characterization. Do not enumerate every observed instance or use. Write as a general reference entry, not a scene summary.

@@ -82,6 +82,8 @@ function Extraction.new(deps)
     self._get_model                = deps.get_model
     self._get_prompt               = deps.get_prompt
     self._get_codex_update_prompt  = deps.get_codex_update_prompt
+    self._get_auto_extract         = deps.get_auto_extract
+    self._set_auto_extract         = deps.set_auto_extract
     self._get_book_id              = deps.get_book_id
     self._record_usage    = deps.record_usage
     self._show_msg        = deps.show_msg
@@ -311,7 +313,9 @@ end
 -- ---------------------------------------------------------------------------
 
 function Extraction:onPageChanged(pageno)
-    if not G_reader_settings:readSetting("kocharacters_auto_extract") then return end
+    local book_id = self._get_book_id()
+    if not book_id then return end
+    if not self._get_auto_extract() then return end
 
     if self._pending_extract then
         UIManager:unschedule(self._pending_extract)
@@ -319,9 +323,6 @@ function Extraction:onPageChanged(pageno)
     end
 
     if self._auto_extracting then return end
-
-    local book_id = self._get_book_id()
-    if not book_id then return end
 
     self:_checkAndInvalidateScannedPages(book_id)
 
@@ -361,10 +362,10 @@ function Extraction:onReaderReady()
     greeted[book_id] = true
     G_reader_settings:saveSetting("kocharacters_greeted_books", greeted)
 
-    local auto_on = G_reader_settings:readSetting("kocharacters_auto_extract") and true or false
+    local auto_on = self._get_auto_extract() and true or false
     local msg, ok_text, cancel_text
     if auto_on then
-        msg         = "KoCharacters: auto-extract is ON.\nKeep it enabled for this book?"
+        msg         = "KoCharacters: auto-extract is ON for this book.\nKeep it enabled?"
         ok_text     = "Keep ON"
         cancel_text = "Turn OFF"
     else
@@ -373,15 +374,16 @@ function Extraction:onReaderReady()
         cancel_text = "Keep OFF"
     end
 
+    local book_id_ref = book_id
     UIManager:show(ConfirmBox:new{
         text            = msg,
         ok_text         = ok_text,
         cancel_text     = cancel_text,
         ok_callback     = function()
-            G_reader_settings:saveSetting("kocharacters_auto_extract", true)
+            self._set_auto_extract(book_id_ref, true)
         end,
         cancel_callback = function()
-            G_reader_settings:saveSetting("kocharacters_auto_extract", false)
+            self._set_auto_extract(book_id_ref, false)
         end,
     })
 end

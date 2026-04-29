@@ -340,16 +340,22 @@ function UISettings.open(plugin)
             },
             {
                 text_func = function()
-                    return "Auto-extract on page turn: "
-                        .. (G_reader_settings:readSetting("kocharacters_auto_extract") and "ON" or "OFF")
+                    local book_id = plugin:getBookID()
+                    local on      = plugin:getAutoExtract()
+                    local label   = on and "ON" or "OFF"
+                    if book_id then
+                        local per_book = G_reader_settings:readSetting("kocharacters_auto_extract_books") or {}
+                        label = label .. (per_book[book_id] ~= nil and " (this book)" or " (default)")
+                    end
+                    return "Auto-extract on page turn: " .. label
                 end,
                 callback = function()
-                    local on = G_reader_settings:readSetting("kocharacters_auto_extract")
-                    G_reader_settings:saveSetting("kocharacters_auto_extract", not on)
+                    local book_id = plugin:getBookID()
+                    plugin:setAutoExtract(book_id, not plugin:getAutoExtract())
                     UIManager:close(settings_menu)
                     UISettings.open(plugin)
                 end,
-                help     = "When ON, the plugin automatically scans the current page for new characters each time you turn a page. Requires an extraction API key to be set.",
+                help     = "When ON, the plugin automatically scans each page for new characters. Saved per book — each book can have its own setting. Requires an extraction API key to be set.",
             },
             {
                 text_func = function()

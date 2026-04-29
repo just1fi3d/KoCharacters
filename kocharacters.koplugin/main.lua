@@ -163,6 +163,8 @@ function KoCharacters:init()
         get_model             = function() return self_ref:getGeminiModel() end,
         get_prompt            = function() return self_ref:getExtractionPrompt() end,
         get_codex_update_prompt = function() return self_ref:getCodexUpdatePrompt() end,
+        get_auto_extract      = function() return self_ref:getAutoExtract() end,
+        set_auto_extract      = function(bid, val) self_ref:setAutoExtract(bid, val) end,
         get_book_id           = function() return self_ref:getBookID() end,
         record_usage = function(u) self_ref:recordUsage(u) end,
         show_msg     = function(t, d) self_ref:showMsg(t, d) end,
@@ -516,6 +518,25 @@ function KoCharacters:getGeminiModel()
         or GeminiClient.DEFAULT_MODEL
 end
 
+function KoCharacters:getAutoExtract()
+    local book_id = self:getBookID()
+    if book_id then
+        local per_book = G_reader_settings:readSetting("kocharacters_auto_extract_books") or {}
+        if per_book[book_id] ~= nil then return per_book[book_id] end
+    end
+    return G_reader_settings:readSetting("kocharacters_auto_extract") or false
+end
+
+function KoCharacters:setAutoExtract(book_id, value)
+    if book_id then
+        local per_book = G_reader_settings:readSetting("kocharacters_auto_extract_books") or {}
+        per_book[book_id] = value
+        G_reader_settings:saveSetting("kocharacters_auto_extract_books", per_book)
+    else
+        G_reader_settings:saveSetting("kocharacters_auto_extract", value)
+    end
+end
+
 function KoCharacters:makeGeminiClient()
     return GeminiClient:new(self:getApiKey(), self:getGeminiModel())
 end
@@ -672,6 +693,22 @@ end
 function KoCharacters:onTrackInCodex(word)
     local book_id = self:getBookID()
     if not book_id then self:showMsg("Cannot determine book ID."); return end
+
+    -- The Codex is for world-building elements only — hard-block tracked character names/aliases
+    local word_lower = word:lower()
+    for _, c in ipairs(self.db:load(book_id)) do
+        if (c.name or ""):lower() == word_lower then
+            self:showMsg('"' .. word .. '" is a tracked character.\nThe Codex tracks world-building elements only\n(places, factions, concepts, objects, species).', 5)
+            return
+        end
+        for _, alias in ipairs(c.aliases or {}) do
+            if alias ~= "" and alias:lower() == word_lower then
+                self:showMsg('"' .. word .. '" is a tracked character alias.\nThe Codex tracks world-building elements only\n(places, factions, concepts, objects, species).', 5)
+                return
+            end
+        end
+    end
+
     local api_key = self:getApiKey()
     if not api_key or api_key == "" then self:showMsg("API key not set. Configure in settings."); return end
 
@@ -736,9 +773,22 @@ function KoCharacters:onTrackInCodex(word)
         os.remove(resp_file)
 
         if err then
-            self_ref:showMsg("Codex: " .. err)
-            self_ref:appendActivityLog(book_id, "Codex: failed to track \"" .. word .. "\": " .. err)
+            if err == "individual_character" then
+                self_ref:showMsg('"' .. word .. '" appears to be an individual character.\nThe Codex tracks world-building elements only.', 5)
+            else
+                self_ref:showMsg("Codex: " .. err)
+                self_ref:appendActivityLog(book_id, "Codex: failed to track \"" .. word .. "\": " .. err)
+            end
             return
+        end
+
+        -- Post-response guard: reject if Gemini returned a name matching a tracked character
+        local resp_name_lower = (entry.name or ""):lower()
+        for _, c in ipairs(self_ref.db:load(book_id)) do
+            if (c.name or ""):lower() == resp_name_lower then
+                self_ref:showMsg('"' .. (entry.name or word) .. '" is a tracked character.\nThe Codex tracks world-building elements only.', 5)
+                return
+            end
         end
 
         if usage then self_ref:recordUsage(usage) end
