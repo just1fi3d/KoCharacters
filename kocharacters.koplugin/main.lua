@@ -339,7 +339,22 @@ function KoCharacters:addToMainMenu(menu_items)
         { text = _("Extract characters from this page"),    callback = function() self_ref.extraction:onExtractCurrentPage() end },
         { text = _("Extract codex entries from this page"), callback = function() self_ref:onEnrichCodexFromPage() end },
         { text = _("Scan current chapter"),                 callback = function() self_ref.extraction:onScanChapter() end },
-        { text = _("Scan specific chapter"),                callback = function() self_ref.extraction:onScanSpecificChapter() end, separator = true },
+        { text = _("Scan specific chapter"),                callback = function() self_ref.extraction:onScanSpecificChapter() end },
+        {
+            text_func = function()
+                local book_id = self_ref:getBookID()
+                if not book_id then return _("Retry pending pages") end
+                local cc = #self_ref.db:loadPendingPages(book_id)
+                local cp = self_ref.db_codex:pendingPageCount(book_id)
+                if cc == 0 and cp == 0 then return _("Retry pending pages") end
+                local parts = {}
+                if cc > 0 then parts[#parts+1] = cc .. " char" end
+                if cp > 0 then parts[#parts+1] = cp .. " codex" end
+                return _("Retry pending pages") .. " [" .. table.concat(parts, " · ") .. " pending]"
+            end,
+            callback  = function() self_ref.extraction:onScanPendingPages() end,
+            separator = true,
+        },
         -- View
         { text = _("View saved characters"),   callback = function() self_ref:onViewCharacters() end },
         { text = _("View saved codex entries"), callback = function() UICodex.showBrowser(self_ref) end },

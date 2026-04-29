@@ -8,6 +8,19 @@ local logger         = require("logger")
 local UtilsCharacter = require("utils_character")
 local UtilsShared    = require("utils_shared")
 
+local function readJson(path, default)
+    local f = io.open(path, "r")
+    if not f then return default end
+    local content = f:read("*a"); f:close()
+    return json.decode(content) or default
+end
+
+local function writeJson(path, data)
+    local f = io.open(path, "w")
+    if not f then return end
+    f:write(json.encode(data)); f:close()
+end
+
 local _id_seq = 0
 local function generateId()
     _id_seq = _id_seq + 1
@@ -221,6 +234,43 @@ end
 
 function CodexDB:clear(book_md5)
     os.remove(self:dbPath(book_md5))
+end
+
+-- ---------------------------------------------------------------------------
+-- Pending pages (pages that failed to enrich due to network/API error)
+-- ---------------------------------------------------------------------------
+function CodexDB:pendingPagesPath(book_md5)
+    return self:bookDir(book_md5) .. "/codex_pending_pages.json"
+end
+
+function CodexDB:loadPendingPages(book_md5)
+    return readJson(self:pendingPagesPath(book_md5), {})
+end
+
+function CodexDB:pendingPageCount(book_md5)
+    return #self:loadPendingPages(book_md5)
+end
+
+function CodexDB:markPagePending(book_md5, page_num)
+    local pages = self:loadPendingPages(book_md5)
+    for _, p in ipairs(pages) do if p == page_num then return end end
+    table.insert(pages, page_num)
+    writeJson(self:pendingPagesPath(book_md5), pages)
+end
+
+function CodexDB:removePendingPage(book_md5, page_num)
+    local pages = self:loadPendingPages(book_md5)
+    local new_list = {}
+    for _, p in ipairs(pages) do if p ~= page_num then table.insert(new_list, p) end end
+    if #new_list == 0 then
+        os.remove(self:pendingPagesPath(book_md5))
+    else
+        writeJson(self:pendingPagesPath(book_md5), new_list)
+    end
+end
+
+function CodexDB:clearPendingPages(book_md5)
+    os.remove(self:pendingPagesPath(book_md5))
 end
 
 -- Expand partial names in known_connections to full character names where unambiguous.

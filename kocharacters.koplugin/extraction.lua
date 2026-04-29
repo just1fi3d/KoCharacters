@@ -44,6 +44,20 @@ local function charInText(c, text_lower)
     return false
 end
 
+-- Returns true if there is a default route in the kernel routing table, indicating
+-- the network interface is up. Reads /proc/net/route directly — no external traffic,
+-- not subject to blocking, always reflects live kernel state.
+local function isOnline()
+    local f = io.open("/proc/net/route", "r")
+    if not f then return true end  -- can't read; assume online so we don't silently drop jobs
+    for line in f:lines() do
+        local dest = line:match("^%S+%s+(%S+)")
+        if dest == "00000000" then f:close(); return true end
+    end
+    f:close()
+    return false
+end
+
 -- deps:
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
@@ -82,7 +96,6 @@ function Extraction.new(deps)
     self._poll_timer       = nil
     self._curl_req_file    = nil
     self._curl_resp_file   = nil
-    self._pending_notified = false
     -- Page-count cache for scanned-history invalidation
     self._cached_page_count     = nil
     -- In-memory set of pages where codex enrichment hit a non-retryable error this session.
@@ -446,8 +459,9 @@ end
 function Extraction:_processCharacterJob(job, book_id)
     local pageno = job.pageno
 
-    -- Re-check: page may have been scanned by a previous queue item
+    -- Re-check: page may have been scanned by a previous queue item or chapter scan
     if self.db:isPageScanned(book_id, pageno) then
+        self.db:removePendingPages(book_id, { pageno })
         self:_processNextInQueue()
         return
     end
@@ -483,6 +497,14 @@ function Extraction:_processCharacterJob(job, book_id)
     if not ok then
         logger.warn("KoCharacters: async buildRequestFile failed: " .. tostring(build_err))
         self.db:markPageScanned(book_id, pageno)
+        self:_processNextInQueue()
+        return
+    end
+
+    if not isOnline() then
+        os.remove(self._curl_req_file)
+        self.db:markPagePending(book_id, pageno)
+        logger.info("KoCharacters: offline — page " .. tostring(pageno) .. " queued as pending")
         self:_processNextInQueue()
         return
     end
@@ -571,11 +593,12 @@ function Extraction:_processCharacterJob(job, book_id)
         end
 
         self_ref.db:markPageScanned(book_ref, page_ref)
+        self_ref.db:removePendingPages(book_ref, { page_ref })
 
         if not characters or #characters == 0 then
             self_ref:showExtractedCount(0, page_ref)
             self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
-                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_drainCharacterPending(book_ref)
                 self_ref:_processNextInQueue()
             end)
             return
@@ -590,7 +613,7 @@ function Extraction:_processCharacterJob(job, book_id)
             self_ref._append_log(book_ref, "Auto-extract p." .. page_ref .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
             self_ref:showExtractedCount(#characters, page_ref)
             self_ref:_runCodexEnrichment(book_ref, page_ref, page_text, function()
-                self_ref:_checkAndPromptPendingPages(book_ref)
+                self_ref:_drainCharacterPending(book_ref)
                 self_ref:_processNextInQueue()
             end)
         end, page_ref, true)
@@ -651,6 +674,16 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         return
     end
 
+    if not isOnline() then
+        os.remove(req_file)
+        self:hideScanIndicator()
+        self._codex_pending[pageno] = true
+        self.db_codex:markPagePending(book_id, pageno)
+        logger.info("KoCharacters: offline — codex page " .. tostring(pageno) .. " queued as pending")
+        if on_done then on_done() end
+        return
+    end
+
     local url        = client:asyncExtractUrl()
     local plugin_dir = debug.getinfo(1, "S").source:sub(2):match("(.+/)")
     local helper     = plugin_dir .. "async_request.lua"
@@ -670,6 +703,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
             os.remove(req_file)
             os.remove(resp_file)
             self_ref._codex_pending[pageno] = true
+            self_ref.db_codex:markPagePending(book_id, pageno)
             self_ref:showExtractError()
             self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": timed out — will retry")
             if on_done then on_done() end
@@ -705,6 +739,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
                     end)
                 else
                     self_ref._codex_pending[pageno] = true
+                    self_ref.db_codex:markPagePending(book_id, pageno)
                     self_ref:showExtractError(tostring(api_err):find("Network error") ~= nil)
                     self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": API busy — max retries, marked pending (" .. err_str .. ")")
                     if on_done then on_done() end
@@ -719,6 +754,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
 
         if usage then self_ref._record_usage(usage) end
         self_ref._codex_pending[pageno] = nil
+        self_ref.db_codex:removePendingPage(book_id, pageno)
         if updated and #updated > 0 then
             self_ref.db_codex:merge(book_id, updated, pageno)
             self_ref.db_codex:normalizeConnections(book_id, self_ref.db:load(book_id))
@@ -727,22 +763,48 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
             for _, e in ipairs(updated) do table.insert(_names, e.name or "?") end
             self_ref._append_log(book_id, "Codex auto-enrich p." .. pageno .. ": " .. #updated .. " updated (" .. table.concat(_names, ", ") .. ")")
         end
-        self_ref:_drainCodexPending()
+        self_ref:_drainCodexPending(book_id)
         if on_done then on_done() end
     end
 
     UIManager:scheduleIn(1.5, poll)
 end
 
--- Re-enqueue pages that had a retryable codex error. Called after a successful
--- codex API response, while the API is demonstrably reachable.
-function Extraction:_drainCodexPending()
+-- Re-enqueue character pages that were marked pending (offline or API busy).
+-- Called after a successful character extraction while the API is demonstrably reachable.
+function Extraction:_drainCharacterPending(book_id)
+    local pages = self.db:loadPendingPages(book_id)
+    if #pages == 0 then return end
+    for _, pageno in ipairs(pages) do
+        local already = false
+        for _, job in ipairs(self._extract_queue) do
+            if job.pageno == pageno and job.type == "character" then
+                already = true; break
+            end
+        end
+        if not already then
+            table.insert(self._extract_queue, { type = "character", pageno = pageno })
+        end
+    end
+end
+
+-- Re-enqueue codex pages that had a retryable error. Merges in-memory and on-disk pending
+-- sets so pages survive a restart. Called after a successful codex response.
+function Extraction:_drainCodexPending(book_id)
+    local seen = {}
     local pending = {}
     for pageno in pairs(self._codex_pending) do
+        seen[pageno] = true
         table.insert(pending, pageno)
+    end
+    if book_id then
+        for _, pageno in ipairs(self.db_codex:loadPendingPages(book_id)) do
+            if not seen[pageno] then table.insert(pending, pageno) end
+        end
     end
     if #pending == 0 then return end
     self._codex_pending = {}
+    if book_id then self.db_codex:clearPendingPages(book_id) end
     for _, pageno in ipairs(pending) do
         if not self._codex_error_pages[pageno] then
             local already = false
@@ -825,7 +887,7 @@ function Extraction:autoExtract(page_num)
         self:hideScanIndicator()
         self._auto_extracting = false
         self:showExtractedCount(#characters, cur_page)
-        self:_checkAndPromptPendingPages(book_id)
+        self:_drainCharacterPending(book_id)
     end, cur_page, true)
 end
 
@@ -833,154 +895,27 @@ end
 -- Pending pages
 -- ---------------------------------------------------------------------------
 
-function Extraction:_checkAndPromptPendingPages(book_id)
-    if self._pending_notified then return end
-    local char_pages  = self.db:loadPendingPages(book_id)
-    local codex_count = 0
-    for _ in pairs(self._codex_pending) do codex_count = codex_count + 1 end
-    if #char_pages == 0 and codex_count == 0 then return end
-    self._pending_notified = true
-
-    local parts = {}
-    if #char_pages > 0 then
-        parts[#parts+1] = #char_pages .. " character page(s)"
-    end
-    if codex_count > 0 then
-        parts[#parts+1] = codex_count .. " codex page(s)"
-    end
-
-    local self_ref = self
-    UIManager:show(ConfirmBox:new{
-        text    = table.concat(parts, " and ") .. " couldn't be scanned (offline or API busy).\nRetry now?",
-        ok_text = "Retry",
-        ok_callback = function()
-            if #char_pages > 0 then self_ref:onScanPendingPages(book_id) end
-            if codex_count > 0 then
-                self_ref:_drainCodexPending()
-                if not self_ref._extract_running and #self_ref._extract_queue > 0 then
-                    self_ref:_processNextInQueue()
-                end
-            end
-        end,
-    })
-end
-
+-- Enqueue all pending pages for both character and codex into the async queue.
+-- Called automatically after a successful extraction (auto-drain), and exposed
+-- for the manual "Retry pending pages" menu item.
 function Extraction:onScanPendingPages(book_id)
     book_id = book_id or self._get_book_id()
     if not book_id then return end
-
-    local pages = self.db:loadPendingPages(book_id)
-    if #pages == 0 then self._show_msg("No offline-pending pages."); return end
-    table.sort(pages)
-
-    local client      = GeminiClient:new(self._get_api_key(), self._get_model())
-    local scanned_ok  = {}
-    local total_found = 0
-    local total       = #pages
-    local self_ref    = self
-    local progress_msg
-
-    local function finish(stopped_early)
-        if progress_msg then UIManager:close(progress_msg); progress_msg = nil end
-        self_ref.db:removePendingPages(book_id, scanned_ok)
-        for _, p in ipairs(scanned_ok) do self_ref.db:markPageScanned(book_id, p) end
-        local remaining = self_ref.db:loadPendingPages(book_id)
-        local msg = "Offline scan complete.\n"
-            .. #scanned_ok .. "/" .. total .. " pages scanned.\n"
-            .. "Characters found/updated: " .. total_found
-        if #remaining > 0 then
-            msg = msg .. "\n" .. #remaining .. " page(s) still pending."
-        end
-        if stopped_early then
-            msg = "Network error during scan.\n"
-                .. #scanned_ok .. " page(s) scanned before failure.\n"
-                .. (total - #scanned_ok) .. " page(s) still pending."
-        end
-        self_ref._show_msg(msg, 6)
-        self_ref._pending_notified = false
+    local char_count  = #self.db:loadPendingPages(book_id)
+    local codex_count = self.db_codex:pendingPageCount(book_id)
+    if char_count == 0 and codex_count == 0 then
+        self._show_msg("No pending pages.")
+        return
     end
-
-    local function processPage(idx)
-        if idx > total then finish(false); return end
-
-        local page_num = pages[idx]
-        if progress_msg then UIManager:close(progress_msg) end
-        progress_msg = InfoMessage:new{
-            text = "Scanning offline pages...\n" .. idx .. "/" .. total
-                   .. " (page " .. page_num .. ")",
-        }
-        UIManager:show(progress_msg)
-        UIManager:forceRePaint()
-
-        local page_text = EpubReader.getPageText(self_ref.ui.document, page_num)
-        if not page_text or #page_text < 20 then
-            table.insert(scanned_ok, page_num)
-            UIManager:scheduleIn(0.1, function() processPage(idx + 1) end)
-            return
-        end
-
-        local all_chars  = self_ref.db:load(book_id)
-        local page_lower = page_text:lower()
-        local chars_in_text, skip_names = {}, {}
-        for _, c in ipairs(all_chars) do
-            if charInText(c, page_lower) then table.insert(chars_in_text, c)
-            else table.insert(skip_names, c.name) end
-        end
-
-        local characters, api_err, usage, book_context
-        local ok, call_err = pcall(function()
-            characters, api_err, usage, book_context = client:extractCharacters(
-                page_text, skip_names, chars_in_text, self_ref._get_prompt(),
-                self_ref.db:loadBookContext(book_id))
-        end)
-        if ok and not api_err then self_ref._record_usage(usage) end
-        if ok and book_context and book_context ~= "" then
-            self_ref.db:saveBookContext(book_id, book_context)
-        end
-
-        local is_network = not ok or (type(api_err) == "string" and api_err:find("Network error"))
-        if is_network then
-            finish(true)
-            return
-        end
-
-        if api_err then
-            local err_str = tostring(api_err):sub(1, 120)
-            logger.warn("KoCharacters: pending scan p" .. page_num .. ": " .. err_str)
-            local is_retryable = GeminiClient.isRetryableError(api_err)
-            if is_retryable then
-                self_ref.db:markPagePending(book_id, page_num)
-                self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": API busy — kept pending (" .. err_str .. ")")
-            else
-                table.insert(scanned_ok, page_num)
-                self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": API error — skipped (" .. err_str .. ")")
-            end
-        elseif characters and #characters > 0 then
-            local ex_chars = self_ref.db:load(book_id)
-            local ic = UtilsCharacter.findIncomingConflicts(ex_chars, characters)
-            local conflict_set = {}
-            for _, c in ipairs(ic) do
-                conflict_set[(c.new_char.name or ""):lower()] = true
-                self_ref.db:enrichCharacter(book_id, c.existing_char.name, c.new_char, page_num)
-            end
-            local remaining_chars = {}
-            for _, c in ipairs(characters) do
-                if not conflict_set[(c.name or ""):lower()] then table.insert(remaining_chars, c) end
-            end
-            if #remaining_chars > 0 then self_ref.db:merge(book_id, remaining_chars, page_num) end
-            total_found = total_found + #characters
-            table.insert(scanned_ok, page_num)
-            local _names = {}
-            for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
-            self_ref._append_log(book_id, "Pending scan p." .. page_num .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
-        else
-            table.insert(scanned_ok, page_num)
-        end
-
-        UIManager:scheduleIn(4, function() processPage(idx + 1) end)
+    self:_drainCharacterPending(book_id)
+    self:_drainCodexPending(book_id)
+    if not self._extract_running and #self._extract_queue > 0 then
+        self:_processNextInQueue()
     end
-
-    processPage(1)
+    local parts = {}
+    if char_count > 0 then parts[#parts+1] = char_count .. " character" end
+    if codex_count > 0 then parts[#parts+1] = codex_count .. " codex" end
+    self._show_msg("Retrying " .. table.concat(parts, " + ") .. " pending page(s)...")
 end
 
 -- ---------------------------------------------------------------------------
@@ -1064,6 +999,7 @@ function Extraction:onExtractCurrentPage()
 
         local cur_page = self_ref:_getCurrentPage()
         self_ref.db:markPageScanned(book_id, cur_page)
+        self_ref.db:removePendingPages(book_id, { cur_page })
         self_ref._on_conflicts(book_id, characters, function(resolved)
             if #resolved > 0 then
                 self_ref.db:merge(book_id, resolved, cur_page)
@@ -1071,7 +1007,7 @@ function Extraction:onExtractCurrentPage()
             local _names = {}
             for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
             self_ref._append_log(book_id, "Manual extract p." .. cur_page .. ": " .. #characters .. " character(s) found (" .. table.concat(_names, ", ") .. ")")
-            self_ref:_checkAndPromptPendingPages(book_id)
+            self_ref:_drainCharacterPending(book_id)
             local parts = { "Extracted " .. #characters .. " character(s):\n" }
             for _, c in ipairs(characters) do
                 table.insert(parts, UtilsCharacter.formatText(c))
