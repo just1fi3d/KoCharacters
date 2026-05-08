@@ -100,6 +100,43 @@ function CharacterDB:save(book_md5, characters)
     return true
 end
 
+-- Expand partial names in relationships to full character names where unambiguous,
+-- then deduplicate by name. Operates in place on the characters array.
+local function normalizeRelationships(characters)
+    local exact = {}
+    for _, c in ipairs(characters) do
+        if c.name and c.name ~= "" then exact[c.name:lower()] = true end
+        for _, a in ipairs(c.aliases or {}) do
+            if a ~= "" then exact[a:lower()] = true end
+        end
+    end
+    for _, c in ipairs(characters) do
+        if c.relationships then
+            local norm = {}
+            local seen_names = {}
+            for _, r in ipairs(c.relationships) do
+                local name_part, rel_part = r:match("^(.-)%s*%((.-)%)%s*$")
+                if name_part and rel_part then
+                    name_part = name_part:match("^%s*(.-)%s*$")
+                    local name_lower = name_part:lower()
+                    local full_name = name_part
+                    if not exact[name_lower] then
+                        full_name = UtilsShared.expandPartialName(name_lower, characters) or name_part
+                    end
+                    local key = full_name:lower()
+                    if not seen_names[key] then
+                        seen_names[key] = true
+                        table.insert(norm, full_name .. " (" .. rel_part .. ")")
+                    end
+                elseif r ~= "" then
+                    table.insert(norm, r)
+                end
+            end
+            c.relationships = norm
+        end
+    end
+end
+
 -- Merge new characters into the existing DB.
 -- Existing characters whose name matches are updated (replaced); new names are appended.
 -- Returns: merged list, count of newly added
@@ -159,6 +196,7 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
     end
 
     if changed then
+        normalizeRelationships(existing)
         self:save(book_md5, existing)
     end
 

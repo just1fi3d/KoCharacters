@@ -68,6 +68,33 @@ function UtilsShared.mergeConnections(a, b)
     return result
 end
 
+-- Given a lowercase partial name, return the single unambiguous full character name
+-- where partial_lower is a whole word within the full name, or nil if zero or
+-- multiple candidates match. Only checks names, not aliases (aliases are valid
+-- exact references and are left unchanged by callers before this is tried).
+function UtilsShared.expandPartialName(partial_lower, characters)
+    local candidates = {}
+    local seen = {}
+    for _, c in ipairs(characters) do
+        local full = c.name or ""
+        if full == "" then
+        elseif full:lower() == partial_lower then
+            -- exact match — not a partial
+        else
+            for word in full:lower():gmatch("%S+") do
+                if word == partial_lower then
+                    if not seen[full] then
+                        seen[full] = true
+                        table.insert(candidates, full)
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return #candidates == 1 and candidates[1] or nil
+end
+
 -- Append a page number to a seen_pages array (deduped, sorted). Returns the array.
 function UtilsShared.addSeenPage(pages, page_num)
     if not page_num then return pages or {} end
