@@ -68,6 +68,31 @@ function UtilsShared.mergeConnections(a, b)
     return result
 end
 
+-- Build two lookup tables from a characters array:
+--   exact_names:      primary name lower  → true
+--   alias_to_canonical: alias lower       → primary name (string)
+-- Aliases that match a primary name exactly are skipped (no-op redirect).
+function UtilsShared.buildNameMaps(characters)
+    local exact_names        = {}
+    local alias_to_canonical = {}
+    for _, c in ipairs(characters) do
+        local primary = c.name or ""
+        if primary ~= "" then exact_names[primary:lower()] = true end
+    end
+    for _, c in ipairs(characters) do
+        local primary = c.name or ""
+        if primary ~= "" then
+            for _, alias in ipairs(c.aliases or {}) do
+                local al = alias:lower()
+                if alias ~= "" and not exact_names[al] and not alias_to_canonical[al] then
+                    alias_to_canonical[al] = primary
+                end
+            end
+        end
+    end
+    return exact_names, alias_to_canonical
+end
+
 -- Given a lowercase partial name, return the single unambiguous full character name
 -- where partial_lower is a whole word within the full name, or nil if zero or
 -- multiple candidates match. Only checks names, not aliases (aliases are valid

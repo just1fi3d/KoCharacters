@@ -103,13 +103,7 @@ end
 -- Expand partial names in relationships to full character names where unambiguous,
 -- then deduplicate by name. Operates in place on the characters array.
 local function normalizeRelationships(characters)
-    local exact = {}
-    for _, c in ipairs(characters) do
-        if c.name and c.name ~= "" then exact[c.name:lower()] = true end
-        for _, a in ipairs(c.aliases or {}) do
-            if a ~= "" then exact[a:lower()] = true end
-        end
-    end
+    local exact_names, alias_to_canonical = UtilsShared.buildNameMaps(characters)
     for _, c in ipairs(characters) do
         if c.relationships then
             local norm = {}
@@ -119,8 +113,12 @@ local function normalizeRelationships(characters)
                 if name_part and rel_part then
                     name_part = name_part:match("^%s*(.-)%s*$")
                     local name_lower = name_part:lower()
-                    local full_name = name_part
-                    if not exact[name_lower] then
+                    local full_name
+                    if exact_names[name_lower] then
+                        full_name = name_part
+                    elseif alias_to_canonical[name_lower] then
+                        full_name = alias_to_canonical[name_lower]
+                    else
                         full_name = UtilsShared.expandPartialName(name_lower, characters) or name_part
                     end
                     local key = full_name:lower()

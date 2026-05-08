@@ -283,14 +283,7 @@ function CodexDB:normalizeConnections(book_md5, characters)
     local entries = self:load(book_md5)
     if #entries == 0 then return end
 
-    -- Build a set of exact names and aliases (lower) — these are already valid references
-    local exact = {}
-    for _, c in ipairs(characters) do
-        if c.name and c.name ~= "" then exact[c.name:lower()] = true end
-        for _, alias in ipairs(c.aliases or {}) do
-            if alias ~= "" then exact[alias:lower()] = true end
-        end
-    end
+    local exact_names, alias_to_canonical = UtilsShared.buildNameMaps(characters)
 
     local changed = false
     for _, entry in ipairs(entries) do
@@ -301,17 +294,17 @@ function CodexDB:normalizeConnections(book_md5, characters)
                 if name_part and rel_part then
                     name_part = name_part:match("^%s*(.-)%s*$")
                     local name_lower = name_part:lower()
-                    if exact[name_lower] then
-                        table.insert(new_conns, conn)
+                    local full_name
+                    if exact_names[name_lower] then
+                        full_name = name_part
+                    elseif alias_to_canonical[name_lower] then
+                        full_name = alias_to_canonical[name_lower]
+                        changed = true
                     else
-                        local full_name = UtilsShared.expandPartialName(name_lower, characters)
-                        if full_name then
-                            table.insert(new_conns, full_name .. " (" .. rel_part .. ")")
-                            changed = true
-                        else
-                            table.insert(new_conns, conn)
-                        end
+                        full_name = UtilsShared.expandPartialName(name_lower, characters) or name_part
+                        if full_name ~= name_part then changed = true end
                     end
+                    table.insert(new_conns, full_name .. " (" .. rel_part .. ")")
                 else
                     table.insert(new_conns, conn)
                 end
