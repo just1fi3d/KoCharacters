@@ -170,7 +170,6 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 if notes       and notes ~= ""       then existing[idx].user_notes          = notes       end
                 if first_seen                        then existing[idx].first_seen_page      = first_seen  end
                 if first_quote and first_quote ~= "" then existing[idx].first_appearance_quote = first_quote end
-                if page_num                          then existing[idx].source_page          = page_num    end
                 if page_num                          then existing[idx].last_seen_page       = page_num    end
                 existing[idx].seen_pages       = UtilsShared.addSeenPage(existing[idx].seen_pages, page_num)
                 existing[idx].defining_moments = UtilsShared.unionArrays(prev_moments, existing[idx].defining_moments)
@@ -185,7 +184,7 @@ function CharacterDB:merge(book_md5, new_characters, page_num)
                 changed = true
             else
                 c.id = generateId()
-                if page_num then c.source_page = page_num; c.first_seen_page = page_num; c.last_seen_page = page_num end
+                if page_num then c.first_seen_page = page_num; c.last_seen_page = page_num end
                 c.seen_pages = UtilsShared.addSeenPage(nil, page_num)
                 table.insert(existing, c)
                 name_to_idx[c.name:lower()] = #existing
@@ -357,7 +356,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             if (not c.first_appearance_quote or c.first_appearance_quote == "") and extra.first_appearance_quote then
                 c.first_appearance_quote = extra.first_appearance_quote
             end
-            if page_num then c.source_page = page_num; c.last_seen_page = page_num end
+            if page_num then c.last_seen_page = page_num end
             c.seen_pages    = UtilsShared.addSeenPage(c.seen_pages, page_num)
             c.needs_cleanup = true
 

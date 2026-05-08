@@ -245,8 +245,8 @@ local function formatHTML(entry, portrait_path, container_w, opts)
             .. '<p style="white-space:pre-wrap;">' .. esc(entry.user_notes) .. '</p></div>'
     end
 
-    if entry.source_page then
-        p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(entry.source_page) .. '</p>'
+    if entry.last_seen_page or entry.source_page then
+        p[#p+1] = '<p class="foot">Last updated: page ' .. tostring(entry.last_seen_page or entry.source_page) .. '</p>'
     end
 
     return css, table.concat(p)

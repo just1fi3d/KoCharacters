@@ -146,8 +146,8 @@ function Export.exportList(plugin)
         if c.user_notes and c.user_notes ~= "" then
             p('<div class="field" style="border-top:1px dashed #e0c97a;margin-top:10px;padding-top:10px;"><label>My notes</label><p style="white-space:pre-wrap;">' .. esc(c.user_notes) .. '</p></div>')
         end
-        if c.source_page then
-            p('<div style="margin-top:10px;font-size:.8em;color:#bbb;">Last updated: page ' .. esc(tostring(c.source_page)) .. '</div>')
+        if c.last_seen_page or c.source_page then
+            p('<div style="margin-top:10px;font-size:.8em;color:#bbb;">Last updated: page ' .. esc(tostring(c.last_seen_page or c.source_page)) .. '</div>')
         end
         p('</div>')
         p('</div>')
