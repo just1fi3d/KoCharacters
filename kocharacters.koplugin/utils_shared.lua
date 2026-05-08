@@ -17,6 +17,57 @@ function UtilsShared.unionArrays(a, b)
     return result
 end
 
+-- Merge two known_connections arrays, deduplicating by character name.
+-- For the same character name (case-insensitive), roles are unioned in insertion order.
+-- Entries that don't match "Name (roles)" format are deduplicated by exact string.
+function UtilsShared.mergeConnections(a, b)
+    local ordered_keys = {}
+    local name_map     = {}
+    local verbatim     = {}
+    local verbatim_set = {}
+
+    local function add(entry)
+        if type(entry) ~= "string" or entry == "" then return end
+        local name, roles_str = entry:match("^(.-)%s*%((.+)%)%s*$")
+        if not name then
+            if not verbatim_set[entry] then
+                verbatim_set[entry] = true
+                table.insert(verbatim, entry)
+            end
+            return
+        end
+        name = name:match("^%s*(.-)%s*$")
+        local key = name:lower()
+        if not name_map[key] then
+            name_map[key] = { name = name, role_order = {}, role_set = {} }
+            table.insert(ordered_keys, key)
+        end
+        local rec = name_map[key]
+        for role in (roles_str .. ","):gmatch("([^,]+),") do
+            role = role:match("^%s*(.-)%s*$")
+            if role ~= "" and not rec.role_set[role] then
+                rec.role_set[role] = true
+                table.insert(rec.role_order, role)
+            end
+        end
+    end
+
+    for _, v in ipairs(a or {}) do add(v) end
+    for _, v in ipairs(b or {}) do add(v) end
+
+    local result = {}
+    for _, key in ipairs(ordered_keys) do
+        local rec = name_map[key]
+        if #rec.role_order > 0 then
+            table.insert(result, rec.name .. " (" .. table.concat(rec.role_order, ", ") .. ")")
+        else
+            table.insert(result, rec.name)
+        end
+    end
+    for _, v in ipairs(verbatim) do table.insert(result, v) end
+    return result
+end
+
 -- Append a page number to a seen_pages array (deduped, sorted). Returns the array.
 function UtilsShared.addSeenPage(pages, page_num)
     if not page_num then return pages or {} end

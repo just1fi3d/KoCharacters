@@ -131,7 +131,7 @@ function CodexDB:merge(book_md5, new_entries, page_num)
                                            and ex.first_appearance_quote
                                            or e.first_appearance_quote
                 e.aliases              = UtilsShared.unionArrays(ex.aliases, e.aliases)
-                e.known_connections    = UtilsShared.unionArrays(ex.known_connections, e.known_connections)
+                e.known_connections    = UtilsShared.mergeConnections(ex.known_connections, e.known_connections)
                 if page_num then e.source_page = page_num end
                 e.seen_pages           = UtilsShared.addSeenPage(ex.seen_pages, page_num)
                 existing[idx] = e
