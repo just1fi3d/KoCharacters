@@ -12,6 +12,7 @@ local _           = require("gettext")
 
 local GeminiClient     = require("gemini_client")
 local UtilsCharacter   = require("utils_character")
+local UtilsShared      = require("utils_shared")
 local UIShared         = require("ui_shared")
 local EpubReader       = require("epub_reader")
 local Portrait         = require("portrait")
@@ -178,7 +179,7 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
                             if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
                             if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
                             if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
-                            if type(cc.defining_moments) == "table"  then orig.defining_moments   = cc.defining_moments   end
+                            if type(cc.defining_moments) == "table"  then orig.defining_moments   = UtilsShared.unionArrays(orig.defining_moments, cc.defining_moments) end
                             orig.needs_cleanup = nil
                             changed = true
                             break
@@ -958,7 +959,7 @@ function UICharacter.onCleanupAllCharacters(plugin)
                                 if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
                                 if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
                                 if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
-                                if type(cc.defining_moments) == "table"  then orig.defining_moments   = cc.defining_moments   end
+                                if type(cc.defining_moments) == "table"  then orig.defining_moments   = UtilsShared.unionArrays(orig.defining_moments, cc.defining_moments) end
                                 orig.needs_cleanup = nil
                                 changed = true; break
                             end
@@ -1360,7 +1361,7 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
         char.identity_tags = result.identity_tags
     end
     if type(result.defining_moments) == "table" then
-        char.defining_moments = result.defining_moments
+        char.defining_moments = UtilsShared.unionArrays(char.defining_moments, result.defining_moments)
     end
     char.needs_cleanup = nil
 
