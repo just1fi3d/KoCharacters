@@ -17,9 +17,9 @@ GeminiClient.MODELS = {
     {
         id           = "gemini-3.1-flash-lite",
         name         = "3.1 Flash-Lite",
-        description  = "Most cost-efficient; best for high-volume extraction. Free tier available.",
-        input_price  = 0.125,
-        output_price = 0.750,
+        description  = "Best free-tier option: 11 RPM / 52K TPM / 105 RPD, input and output free. Paid tier: $0.25/$1.50 per 1M tokens, 4K RPM / 4M TPM / 150K RPD.",
+        input_price  = 0.25,
+        output_price = 1.50,
         free_tier    = true,
         preview      = false,
         thinking     = false,
