@@ -53,6 +53,15 @@ function UtilsCharacter.levenshtein(a, b)
     return prev[lb]
 end
 
+-- Returns true when two already-lowercased names share a word token of ≥4 chars.
+-- "Kaine Ferron" / "Ferron" → true (shared word). "Temper" / "Temperance" → false.
+local function sharesSignificantWord(a_low, b_low)
+    local wa = {}
+    for w in a_low:gmatch("%S+") do if #w >= 4 then wa[w] = true end end
+    for w in b_low:gmatch("%S+") do if #w >= 4 and wa[w] then return true end end
+    return false
+end
+
 -- Returns true when two already-lowercased names are similar enough to be duplicates.
 -- Both names must be at least 4 characters; exact matches are not considered similar
 -- (they are intentional updates, not conflicts).
@@ -61,8 +70,7 @@ function UtilsCharacter.namesAreSimilar(a_low, b_low)
     if a_low == b_low then return false end
     local dist      = UtilsCharacter.levenshtein(a_low, b_low)
     local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
-    local substring = a_low:find(b_low, 1, true) or b_low:find(a_low, 1, true)
-    return dist <= threshold or substring ~= nil
+    return dist <= threshold or sharesSignificantWord(a_low, b_low)
 end
 
 -- Compare incoming (new) characters against an existing list; return conflict pairs.
