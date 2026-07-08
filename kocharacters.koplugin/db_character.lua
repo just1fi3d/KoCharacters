@@ -55,16 +55,26 @@ end
 
 -- Load the character list for a book (returns empty table if none saved)
 function CharacterDB:load(book_md5)
-    local path = self:dbPath(book_md5)
-    local f = io.open(path, "r")
-    if not f then
-        return {}
+    local path     = self:dbPath(book_md5)
+    local bak_path = path .. ".bak"
+
+    local function readAndDecode(p)
+        local f = io.open(p, "r")
+        if not f then return nil end
+        local content = f:read("*a"); f:close()
+        return json.decode(content)
     end
-    local content = f:read("*a")
-    f:close()
-    local data, _, err = json.decode(content)
+
+    local data = readAndDecode(path)
     if not data then
-        return {}
+        -- Main file missing or corrupt — try backup
+        data = readAndDecode(bak_path)
+        if data then
+            logger.warn("KoCharacters: characters.json corrupt or missing; recovered from .bak")
+            self._backup_warning = true
+        else
+            return {}
+        end
     end
     -- Backfill missing IDs and seen_pages (one-time migration for existing DBs)
     local needs_save = false
@@ -90,7 +100,19 @@ function CharacterDB:save(book_md5, characters)
             c.id = generateId()
         end
     end
-    local path = self:dbPath(book_md5)
+    local path     = self:dbPath(book_md5)
+    local bak_path = path .. ".bak"
+
+    -- Promote current file to .bak only if it is valid JSON (never overwrite a good
+    -- backup with corrupt data).
+    local f_check = io.open(path, "r")
+    if f_check then
+        local existing = f_check:read("*a"); f_check:close()
+        if json.decode(existing) then
+            os.rename(path, bak_path)
+        end
+    end
+
     local f = io.open(path, "w")
     if not f then
         return false, "Cannot write to " .. path

@@ -706,7 +706,13 @@ function UICharacter.onViewCharacters(plugin)
         plugin:showMsg("Cannot identify book — is a document open?")
         return
     end
-    if #plugin.db:load(book_id) == 0 then
+    local characters = plugin.db:load(book_id)
+    if plugin.db._backup_warning then
+        plugin.db._backup_warning = false
+        plugin:showMsg("⚠ characters.json was corrupt — loaded from backup.\nCheck for missing characters.", 6)
+        return
+    end
+    if #characters == 0 then
         plugin:showMsg("No characters saved yet for this book.\nUse 'Extract characters from this page' first.")
         return
     end
