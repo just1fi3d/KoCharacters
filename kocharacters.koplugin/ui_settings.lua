@@ -339,6 +339,11 @@ function UISettings.open(plugin)
                 help     = "Opens AI configuration: set your Gemini API key, Imagen API key, and customise the AI prompts used for extraction, cleanup, reanalysis, and portrait generation.",
             },
             {
+                text     = "Underline tracked names...",
+                callback = function() UISettings.openUnderlineSettings(plugin) end,
+                help     = "Underline character and codex names on the page as you read, with an optional tap or double-tap to open the entry.",
+            },
+            {
                 text_func = function()
                     local book_id = plugin:getBookID()
                     local on      = plugin:getAutoExtract()
@@ -624,6 +629,103 @@ function UISettings.open(plugin)
         end,
     }
     UIManager:show(settings_menu)
+end
+
+-- ---------------------------------------------------------------------------
+-- Underline tracked names
+-- ---------------------------------------------------------------------------
+
+function UISettings.openUnderlineSettings(plugin)
+    local Menu = require("ui/widget/menu")
+
+    local function reopen(menu)
+        UIManager:close(menu)
+        UISettings.openUnderlineSettings(plugin)
+    end
+
+    local underline_menu
+    underline_menu = Menu:new{
+        title      = "Underline Tracked Names",
+        item_table = {
+            {
+                text_func = function()
+                    return "Underline tracked names: "
+                        .. (G_reader_settings:isTrue("kocharacters_underline_enabled") and "ON" or "OFF")
+                end,
+                callback = function()
+                    local was_on = G_reader_settings:isTrue("kocharacters_underline_enabled")
+                    G_reader_settings:saveSetting("kocharacters_underline_enabled", not was_on)
+                    if not was_on and plugin.underline then
+                        UIManager:close(underline_menu)
+                        plugin.underline:refresh(true)
+                        UISettings.openUnderlineSettings(plugin)
+                    else
+                        reopen(underline_menu)
+                    end
+                end,
+                help = "Draws a thin underline beneath every tracked character and codex name on the page. EPUB books only. Turning this on scans the book for all tracked names (repeated on each book open only for newly added names).",
+            },
+            {
+                text_func = function()
+                    local mode   = G_reader_settings:readSetting("kocharacters_underline_tap") or "off"
+                    local labels = { off = "Underline only", single = "Single tap", double = "Double tap" }
+                    return "Open entry on: " .. (labels[mode] or "Underline only")
+                end,
+                callback = function()
+                    local cycle   = { off = "single", single = "double", double = "off" }
+                    local current = G_reader_settings:readSetting("kocharacters_underline_tap") or "off"
+                    local nxt     = cycle[current] or "single"
+                    G_reader_settings:saveSetting("kocharacters_underline_tap", nxt)
+                    if nxt == "double" and G_reader_settings:nilOrTrue("disable_double_tap") then
+                        UIManager:show(InfoMessage:new{
+                            text = "Double tap is disabled in KOReader.\nEnable it under Settings → Taps and gestures → Double tap, or double taps on names will do nothing.",
+                        })
+                    end
+                    reopen(underline_menu)
+                end,
+                help = "What happens when you tap an underlined name: nothing (underline is purely visual), a single tap opens the character/codex entry, or a double tap does. Single tap can intercept page-turn taps that land on a name; double tap avoids that but requires KOReader's double-tap gesture to be enabled (adds a short delay to every tap).",
+            },
+            {
+                text_func = function()
+                    return "Include codex entries: "
+                        .. (G_reader_settings:nilOrTrue("kocharacters_underline_codex") and "ON" or "OFF")
+                end,
+                callback = function()
+                    G_reader_settings:flipNilOrTrue("kocharacters_underline_codex")
+                    if plugin.underline then pcall(function() plugin.underline:refresh(false) end) end
+                    reopen(underline_menu)
+                end,
+                help = "When ON, codex entry names (places, factions, objects…) are underlined alongside character names.",
+            },
+            {
+                text_func = function()
+                    return "Underline new entries immediately: "
+                        .. (G_reader_settings:nilOrTrue("kocharacters_underline_auto_add") and "ON" or "OFF")
+                end,
+                callback = function()
+                    G_reader_settings:flipNilOrTrue("kocharacters_underline_auto_add")
+                    reopen(underline_menu)
+                end,
+                help = "When ON (default), each extraction that finds new characters triggers a background rescan so their names are underlined from the next page turn — this may cause a brief pause shortly after extraction completes. When OFF, new names are underlined only after the book is reopened or a manual rescan.",
+            },
+            {
+                text     = "Rescan book now",
+                callback = function()
+                    UIManager:close(underline_menu)
+                    if plugin.underline then plugin.underline:refresh(true) end
+                end,
+                help = "Re-checks the tracked name list against the book and scans for any names added since the last scan.",
+            },
+        },
+        width       = Screen:getWidth(),
+        show_parent = plugin.ui,
+        onMenuHold  = function(_, item)
+            if item and item.help then
+                UIManager:show(InfoMessage:new{ text = item.help })
+            end
+        end,
+    }
+    UIManager:show(underline_menu)
 end
 
 -- ---------------------------------------------------------------------------

@@ -116,6 +116,7 @@ Rules:
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
 - For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Sam" is confirmed to be "Sam Carter"), use the full name and put the short name in aliases.
+- For aliases: when the primary name has multiple parts and the text refers to the character by their given name alone (e.g. "Eleanor Vance" is called "Eleanor"), include that standalone given name in aliases. Only do this for personal given names — never for descriptors ("Unnamed", "Shepherd") or particles.
 - For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into at most 3–4 sentences. Do NOT append sentences to the existing text. Do NOT list events, actions, or scene-specific emotional reactions.
 - For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
@@ -146,7 +147,7 @@ Correct output:
   "characters": [
     {
       "name": "Helena Marino",
-      "aliases": [],
+      "aliases": ["Helena"],
       "identity_tags": ["Prisoner","Resistance fighter","Vivimancer"],
       "occupation": "",
       "first_appearance_quote": "Helena wondered sometimes if she still had eyes.",
@@ -177,7 +178,8 @@ Key points shown above:
 - Grace's "Hospital orderly" is occupation; "Resistance survivor" and "Forced laborer" are identity_tags (social status under the regime) — never duplicate occupation in identity_tags.
 - Grace's personality is a trait summary ("fearful", "survivalist pragmatism") — not events ("she scarred herself").
 - Grace's defining_moment is a One-Way Door permanent change, one sentence, past tense.
-- Helena is returned only because she appears in the passage; her profile is updated minimally (new relationship added, nothing else changed).
+- Helena is returned only because she appears in the passage; her profile is updated minimally (new relationship and alias added, nothing else changed).
+- The passage calls Helena Marino by her given name alone, so "Helena" is added to her aliases. Grace's name has only one part, so no alias is derived for her.
 - Relationships use the full name from the existing profiles: "Helena Marino", not "Helena".
 ---
 
@@ -187,7 +189,7 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
   "characters": [
     {
       "name": "Full name or best available name",
-      "aliases": ["nickname", "title"],
+      "aliases": ["nickname", "title", "standalone given name when the text uses it"],
       "identity_tags": ["Core faction, class, status, or demonstrated ability markers — e.g. 'Inquisition Member', 'Convicted Outlaw', 'Mistborn', 'Necromancer'. Distinct from occupation. Only include abilities the text explicitly establishes."],
       "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — fill from explicit text or established identity; empty string only if genuinely unknown",
       "first_appearance_quote": "A short verbatim quote from the text where they first appear",
@@ -227,6 +229,7 @@ Rules:
 - For defining_moments: before adding a new entry, ask: does this produce a permanent change to this character's status, body, or knowledge that is not already captured by any existing entry? The test is the outcome — a second interrogation session is not a new entry if the permanent trauma or knowledge it produces is already recorded; a second exile is not a new entry if the character's outcast status is already captured. But a new injury to a different body part, a new faction joined, or a new secret discovered is a genuinely new outcome and should be recorded. Only append if yes. Never remove, rewrite, or consolidate existing entries — copy them verbatim into the output.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). Only include abilities the text explicitly establishes or acknowledges — never infer from personality. Otherwise preserve unchanged.
 - For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. If updating, write as a concise summary of the character's deepest goals and fears — at most 3–4 sentences; synthesize, never list scene-level objectives as separate items. If the existing motivation already captures the core drives, preserve it unchanged.
+- For aliases: when the primary name has multiple parts and the passage refers to the character by their given name alone (e.g. "Eleanor Vance" is called "Eleanor"), add that standalone given name to aliases if not already present. Only do this for personal given names — never for descriptors ("Unnamed", "Shepherd") or particles.
 - For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
 
@@ -240,12 +243,13 @@ Passage:
 Helena moved through the crowded mess hall without drawing attention, cataloguing faces. She had learned from Kaine Ferron's sessions what it cost to be noticed — stillness was its own armour. Her collar-bones showed sharp above her prison shift. Warden Tane watched her from the doorway, expression flat.
 
 Correct output:
-[{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair; her collar-bones are prominently visible.","personality":"Disciplined and self-contained, she moves through dangerous spaces with deliberate invisibility — cataloguing people before allowing herself to react.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)","Warden Tane (guard)"]}]
+[{"name":"Helena Marino","aliases":["Helena"],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair; her collar-bones are prominently visible.","personality":"Disciplined and self-contained, she moves through dangerous spaces with deliberate invisibility — cataloguing people before allowing herself to react.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)","Warden Tane (guard)"]}]
 
 Key points shown above:
 - personality is a fresh unified rewrite, not an append — not "Disciplined and observant. She has learned to move without drawing attention."
 - physical_description incorporates new explicit detail from the passage.
 - motivation and defining_moments are unchanged — nothing in this passage warrants updating them.
+- The passage calls Helena Marino by her given name alone, so "Helena" is added to aliases.
 - "Kaine Ferron" uses the exact name from the existing profile, not "Ferron" or "Kaine".
 - Warden Tane is added as a new relationship using the name as it appears in the passage.
 ---

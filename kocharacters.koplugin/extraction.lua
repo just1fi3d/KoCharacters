@@ -90,6 +90,7 @@ function Extraction.new(deps)
     self._append_log      = deps.append_log
     self._on_conflicts    = deps.on_conflicts
     self._check_warn_dups = deps.check_warn_duplicates
+    self._on_data_changed = deps.on_data_changed or function() end
     -- Extraction state
     self._auto_extracting  = false
     self._pending_extract  = nil
@@ -609,6 +610,7 @@ function Extraction:_processCharacterJob(job, book_id)
         self_ref._on_conflicts(book_ref, characters, function(resolved)
             if #resolved > 0 then
                 self_ref.db:merge(book_ref, resolved, page_ref)
+                self_ref._on_data_changed()
             end
             local _names = {}
             for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
@@ -885,7 +887,10 @@ function Extraction:autoExtract(page_num)
 
     local cur_page = page_num or self:_getCurrentPage()
     self._on_conflicts(book_id, characters, function(resolved)
-        if #resolved > 0 then self.db:merge(book_id, resolved, cur_page) end
+        if #resolved > 0 then
+            self.db:merge(book_id, resolved, cur_page)
+            self._on_data_changed()
+        end
         self:hideScanIndicator()
         self._auto_extracting = false
         self:showExtractedCount(#characters, cur_page)
@@ -1005,6 +1010,7 @@ function Extraction:onExtractCurrentPage()
         self_ref._on_conflicts(book_id, characters, function(resolved)
             if #resolved > 0 then
                 self_ref.db:merge(book_id, resolved, cur_page)
+                self_ref._on_data_changed()
             end
             local _names = {}
             for _, c in ipairs(characters) do table.insert(_names, c.name or "?") end
@@ -1327,7 +1333,10 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
             for _, c in ipairs(characters) do
                 if not conflict_set[(c.name or ""):lower()] then table.insert(remaining, c) end
             end
-            if #remaining > 0 then self_ref.db:merge(book_id, remaining, batch_end) end
+            if #remaining > 0 then
+                self_ref.db:merge(book_id, remaining, batch_end)
+                self_ref._on_data_changed()
+            end
             total_found = total_found + #characters
         end
 

@@ -20,6 +20,7 @@ local UICharacter  = require("ui_character")
 local UICodex      = require("ui_codex")
 local EpubReader   = require("epub_reader")
 local Extraction   = require("extraction")
+local Underline    = require("underline")
 
 local function portraitSafeName(name)
     return (name:gsub("[^%w%-]", "_"):lower())
@@ -175,7 +176,12 @@ function KoCharacters:init()
         check_warn_duplicates = function(book_id, on_continue)
             UICharacter.checkAndWarnDuplicates(self_ref, book_id, on_continue)
         end,
+        on_data_changed = function()
+            if self_ref.underline then self_ref.underline:onDataChanged() end
+        end,
     })
+
+    self.underline = Underline.new(self)
 
     -- Add "View character" option to the word selection / highlight popup (only when the word matches a known character)
     if self.ui.highlight and self.ui.highlight.addToHighlightDialog then
@@ -320,6 +326,7 @@ end
 
 function KoCharacters:onReaderReady()
     self.extraction:onReaderReady()
+    self.underline:onReaderReady()
 end
 
 function KoCharacters:onCloseDocument()
@@ -794,6 +801,7 @@ function KoCharacters:onTrackInCodex(word)
         if usage then self_ref:recordUsage(usage) end
         entry.name = entry.name or word
         local _, added = self_ref.db_codex:merge(book_id, { entry }, page)
+        if added > 0 then self_ref.underline:onDataChanged() end
         local verb = added > 0 and "added to codex." or "updated in codex."
         self_ref:showMsg("\u{25C8} \"" .. word .. "\" " .. verb, 3)
         self_ref:appendActivityLog(book_id, "Codex: tracked \"" .. word .. "\" (p." .. tostring(page or "?") .. ")")
