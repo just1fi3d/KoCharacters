@@ -38,7 +38,8 @@ end
 function UICharacter.checkAndWarnDuplicates(plugin, book_id, on_continue)
     local characters = plugin.db:load(book_id)
     if #characters < 2 then on_continue(); return end
-    local dup_pairs = UtilsCharacter.findDuplicatePairs(characters)
+    local distinct_pairs = plugin.db:loadDistinctPairs(book_id)
+    local dup_pairs = UtilsCharacter.findDuplicatePairs(characters, distinct_pairs)
     if #dup_pairs == 0 then on_continue(); return end
 
     local function processPairs(remaining)
@@ -72,9 +73,10 @@ function UICharacter.checkAndWarnDuplicates(plugin, book_id, on_continue)
                     end,
                 },
                 {
-                    text     = "Skip",
+                    text     = "Keep separate",
                     callback = function()
                         UIManager:close(viewer)
+                        plugin.db:markDistinctPair(book_id, a, b)
                         processPairs(rest)
                     end,
                 },
@@ -87,9 +89,10 @@ function UICharacter.checkAndWarnDuplicates(plugin, book_id, on_continue)
 end
 
 function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done, page_num, skip_cleanup)
-    new_chars = UtilsCharacter.deduplicateIncoming(new_chars)
+    local distinct_pairs = plugin.db:loadDistinctPairs(book_id)
+    new_chars = UtilsCharacter.deduplicateIncoming(new_chars, distinct_pairs)
     local existing  = plugin.db:load(book_id)
-    local conflicts = UtilsCharacter.findIncomingConflicts(existing, new_chars)
+    local conflicts = UtilsCharacter.findIncomingConflicts(existing, new_chars, distinct_pairs)
     if #conflicts == 0 then on_done(new_chars); return end
 
     -- Auto-accept mode: enrich all conflicts silently, show a toast summary
@@ -245,6 +248,7 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
                     text     = "Add as new",
                     callback = function()
                         UIManager:close(viewer)
+                        plugin.db:markDistinctPair(book_id, new_c.name, ex_c.name)
                         processConflicts(rest)
                     end,
                 },

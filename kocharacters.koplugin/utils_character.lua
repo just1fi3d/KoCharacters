@@ -35,6 +35,14 @@ end
 -- Duplicate detection
 -- ---------------------------------------------------------------------------
 
+-- Order-independent key for a pair of names, used to look up pairs the user
+-- has marked as distinct ("Add as new" / "Keep separate").
+function UtilsCharacter.pairKey(a, b)
+    a, b = (a or ""):lower(), (b or ""):lower()
+    if b < a then a, b = b, a end
+    return a .. "\n" .. b
+end
+
 function UtilsCharacter.levenshtein(a, b)
     a, b = a:lower(), b:lower()
     local la, lb = #a, #b
@@ -75,13 +83,17 @@ end
 
 -- Compare incoming (new) characters against an existing list; return conflict pairs.
 -- Exact name matches are intentional updates handled by merge() — skip them here.
-function UtilsCharacter.findIncomingConflicts(existing, incoming)
+-- distinct_pairs (optional): set of pairKey() strings the user has marked as
+-- different people; matching pairs are never reported again.
+function UtilsCharacter.findIncomingConflicts(existing, incoming, distinct_pairs)
+    distinct_pairs = distinct_pairs or {}
     local conflicts = {}
     for _, new_c in ipairs(incoming) do
         local new_low = (new_c.name or ""):lower()
         for _, ex_c in ipairs(existing) do
             local ex_low = (ex_c.name or ""):lower()
-            if UtilsCharacter.namesAreSimilar(new_low, ex_low) then
+            if UtilsCharacter.namesAreSimilar(new_low, ex_low)
+                and not distinct_pairs[UtilsCharacter.pairKey(new_low, ex_low)] then
                 table.insert(conflicts, { new_char = new_c, existing_char = ex_c })
                 break
             end
@@ -92,8 +104,10 @@ end
 
 -- Collapse near-duplicate names within a single incoming batch before DB insertion.
 -- Merges the second into the first (fills in missing fields), returns deduped list.
-function UtilsCharacter.deduplicateIncoming(chars)
+-- distinct_pairs (optional): set of pairKey() strings; those pairs are never collapsed.
+function UtilsCharacter.deduplicateIncoming(chars, distinct_pairs)
     if #chars < 2 then return chars end
+    distinct_pairs = distinct_pairs or {}
     local removed = {}
     for i = 1, #chars do
         if not removed[i] then
@@ -103,7 +117,8 @@ function UtilsCharacter.deduplicateIncoming(chars)
                 if not removed[j] then
                     local b     = chars[j]
                     local b_low = (b.name or ""):lower()
-                    if UtilsCharacter.namesAreSimilar(a_low, b_low) then
+                    if UtilsCharacter.namesAreSimilar(a_low, b_low)
+                        and not distinct_pairs[UtilsCharacter.pairKey(a_low, b_low)] then
                         if (a.role == nil or a.role == "") and b.role and b.role ~= "" then
                             a.role = b.role
                         end
@@ -130,13 +145,16 @@ end
 
 -- Check within an existing DB list for near-duplicate pairs.
 -- Used by checkAndWarnDuplicates before manual extraction actions.
-function UtilsCharacter.findDuplicatePairs(characters)
+-- distinct_pairs (optional): set of pairKey() strings; those pairs are never reported.
+function UtilsCharacter.findDuplicatePairs(characters, distinct_pairs)
+    distinct_pairs = distinct_pairs or {}
     local pairs_found = {}
     for i = 1, #characters do
         for j = i + 1, #characters do
             local a_low = (characters[i].name or ""):lower()
             local b_low = (characters[j].name or ""):lower()
-            if UtilsCharacter.namesAreSimilar(a_low, b_low) then
+            if UtilsCharacter.namesAreSimilar(a_low, b_low)
+                and not distinct_pairs[UtilsCharacter.pairKey(a_low, b_low)] then
                 table.insert(pairs_found, { characters[i].name or "", characters[j].name or "" })
             end
         end

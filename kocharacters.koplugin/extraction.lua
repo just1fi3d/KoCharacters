@@ -1314,7 +1314,8 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
             self_ref._append_log(book_id, "Chapter scan pp." .. batch_start .. "-" .. batch_end .. ": API error (" .. err_str .. ")")
         elseif characters and #characters > 0 then
             local ex_chars     = self_ref.db:load(book_id)
-            local ic           = UtilsCharacter.findIncomingConflicts(ex_chars, characters)
+            local ic           = UtilsCharacter.findIncomingConflicts(
+                ex_chars, characters, self_ref.db:loadDistinctPairs(book_id))
             local conflict_set = {}
             for _, c in ipairs(ic) do
                 conflict_set[(c.new_char.name or ""):lower()] = true

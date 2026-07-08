@@ -552,6 +552,37 @@ function CharacterDB:clearPendingPages(book_md5)
 end
 
 -- ---------------------------------------------------------------------------
+-- Distinct pairs (name pairs the user has confirmed are different people;
+-- suppresses future duplicate/conflict prompts for those pairs)
+-- ---------------------------------------------------------------------------
+function CharacterDB:distinctPairsPath(book_md5)
+    return self:bookDir(book_md5) .. "/distinct_pairs.json"
+end
+
+-- Returns a set keyed by UtilsCharacter.pairKey for direct lookup
+function CharacterDB:loadDistinctPairs(book_md5)
+    local pairs_list = readJson(self:distinctPairsPath(book_md5), {})
+    local set = {}
+    for _, p in ipairs(pairs_list) do
+        if type(p) == "table" and p[1] and p[2] then
+            set[UtilsCharacter.pairKey(p[1], p[2])] = true
+        end
+    end
+    return set
+end
+
+function CharacterDB:markDistinctPair(book_md5, name_a, name_b)
+    if not name_a or not name_b or name_a == "" or name_b == "" then return end
+    local key = UtilsCharacter.pairKey(name_a, name_b)
+    local pairs_list = readJson(self:distinctPairsPath(book_md5), {})
+    for _, p in ipairs(pairs_list) do
+        if type(p) == "table" and UtilsCharacter.pairKey(p[1], p[2]) == key then return end
+    end
+    table.insert(pairs_list, { name_a, name_b })
+    writeJson(self:distinctPairsPath(book_md5), pairs_list)
+end
+
+-- ---------------------------------------------------------------------------
 -- Book context (auto-built genre/era/setting summary)
 -- ---------------------------------------------------------------------------
 function CharacterDB:bookContextPath(book_md5)
