@@ -119,8 +119,8 @@ function Export.exportList(plugin)
             for _, t in ipairs(c.identity_tags) do table.insert(tag_parts, esc(t)) end
             p('<div class="field"><label>Identity</label><p>' .. table.concat(tag_parts, ", ") .. '</p></div>')
         end
-        if c.motivation and c.motivation ~= "" then
-            p('<div class="field"><label>Motivation</label><p>' .. esc(c.motivation) .. '</p></div>')
+        if c.background and c.background ~= "" then
+            p('<div class="field"><label>Background</label><p>' .. esc(c.background) .. '</p></div>')
         end
         if c.defining_moments and #c.defining_moments > 0 then
             local moment_parts = {}

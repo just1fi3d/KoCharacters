@@ -284,10 +284,6 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     end
     table.sort(merged_seen)
 
-    -- motivation: prefer target's if set, otherwise take source's
-    local motivation = (target.motivation and target.motivation ~= "") and target.motivation
-                       or (source.motivation or "")
-
     -- Role: prefer a non-unknown value
     local role = target.role or "unknown"
     if (role == "unknown" or role == "") and source.role and source.role ~= "unknown" then
@@ -309,7 +305,7 @@ function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     target.identity_tags          = merged_tags
     target.physical_description   = mergeText(target.physical_description, source.physical_description)
     target.personality            = mergeText(target.personality, source.personality)
-    target.motivation             = motivation
+    target.background             = mergeText(target.background, source.background)
     target.defining_moments       = merged_moments
     target.seen_pages             = merged_seen
     target.relationships          = merged_rels
@@ -356,10 +352,6 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             -- defining_moments: append incoming to existing (never overwrite)
             local merged_moments = UtilsShared.unionArrays(c.defining_moments, extra.defining_moments)
 
-            -- motivation: take extra's value only if current is empty
-            local motivation = (c.motivation and c.motivation ~= "") and c.motivation
-                               or (extra.motivation or "")
-
             local role = c.role or "unknown"
             if (role == "unknown" or role == "") and extra.role and extra.role ~= "unknown" then
                 role = extra.role
@@ -369,7 +361,7 @@ function CharacterDB:enrichCharacter(book_md5, existing_name, extra, page_num)
             c.identity_tags        = merged_tags
             c.physical_description = mergeText(c.physical_description, extra.physical_description)
             c.personality          = mergeText(c.personality,          extra.personality)
-            c.motivation           = motivation
+            c.background           = mergeText(c.background,           extra.background)
             c.defining_moments     = merged_moments
             c.relationships        = merged_rels
             c.role                 = role

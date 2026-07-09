@@ -178,11 +178,13 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
                             if type(cc.aliases) == "table"           then orig.aliases            = cc.aliases           end
                             if cc.physical_description ~= nil        then orig.physical_description = cc.physical_description end
                             if cc.personality          ~= nil        then orig.personality        = cc.personality        end
-                            if cc.motivation           ~= nil        then orig.motivation         = cc.motivation         end
+                            if cc.background           ~= nil        then orig.background         = cc.background         end
                             if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
                             if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
                             if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
-                            if type(cc.defining_moments) == "table"  then orig.defining_moments   = UtilsShared.unionArrays(orig.defining_moments, cc.defining_moments) end
+                            -- Cleanup output is authoritative for defining_moments: unioning with
+                            -- the originals would resurrect the near-duplicates it just merged.
+                            if type(cc.defining_moments) == "table" and #cc.defining_moments > 0  then orig.defining_moments = cc.defining_moments end
                             orig.needs_cleanup = nil
                             changed = true
                             break
@@ -357,6 +359,14 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                 end,
             },
             {
+                text     = "Background",
+                callback = function()
+                    editTextField("Background", char.background, true, function(val)
+                        char.background = val ~= "" and val or nil; save(); after_save()
+                    end)
+                end,
+            },
+            {
                 text     = "Appearance",
                 callback = function()
                     editTextField("Appearance", char.physical_description, true, function(val)
@@ -369,14 +379,6 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                 callback = function()
                     editTextField("Personality", char.personality, true, function(val)
                         char.personality = val; save(); after_save()
-                    end)
-                end,
-            },
-            {
-                text     = "Motivation",
-                callback = function()
-                    editTextField("Motivation", char.motivation, true, function(val)
-                        char.motivation = val ~= "" and val or nil; save(); after_save()
                     end)
                 end,
             },
@@ -965,11 +967,13 @@ function UICharacter.onCleanupAllCharacters(plugin)
                                 if type(cc.aliases) == "table"           then orig.aliases            = cc.aliases           end
                                 if cc.physical_description ~= nil        then orig.physical_description = cc.physical_description end
                                 if cc.personality          ~= nil        then orig.personality        = cc.personality        end
-                                if cc.motivation           ~= nil        then orig.motivation         = cc.motivation         end
+                                if cc.background           ~= nil        then orig.background         = cc.background         end
                                 if cc.role and cc.role ~= ""             then orig.role               = cc.role               end
                                 if type(cc.relationships)  == "table"    then orig.relationships      = cc.relationships      end
                                 if type(cc.identity_tags)  == "table"    then orig.identity_tags      = cc.identity_tags      end
-                                if type(cc.defining_moments) == "table"  then orig.defining_moments   = UtilsShared.unionArrays(orig.defining_moments, cc.defining_moments) end
+                                -- Cleanup output is authoritative for defining_moments: unioning with
+                                -- the originals would resurrect the near-duplicates it just merged.
+                                if type(cc.defining_moments) == "table" and #cc.defining_moments > 0  then orig.defining_moments = cc.defining_moments end
                                 orig.needs_cleanup = nil
                                 changed = true; break
                             end
@@ -1360,8 +1364,8 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     if result.personality and result.personality ~= "" then
         char.personality = result.personality
     end
-    if result.motivation and result.motivation ~= "" then
-        char.motivation = result.motivation
+    if result.background and result.background ~= "" then
+        char.background = result.background
     end
     if result.role and result.role ~= "" then char.role = result.role end
     if type(result.relationships) == "table" then
@@ -1370,8 +1374,10 @@ function UICharacter.onCleanCharacter(plugin, book_id, char_name)
     if type(result.identity_tags) == "table" then
         char.identity_tags = result.identity_tags
     end
-    if type(result.defining_moments) == "table" then
-        char.defining_moments = UtilsShared.unionArrays(char.defining_moments, result.defining_moments)
+    -- Cleanup output is authoritative for defining_moments: unioning with
+    -- the originals would resurrect the near-duplicates it just merged.
+    if type(result.defining_moments) == "table" and #result.defining_moments > 0 then
+        char.defining_moments = result.defining_moments
     end
     char.needs_cleanup = nil
 

@@ -197,10 +197,10 @@ function UtilsCharacter.formatText(c)
         table.insert(lines, table.concat(c.identity_tags, ", "))
     end
 
-    if c.motivation and c.motivation ~= "" then
+    if c.background and c.background ~= "" then
         table.insert(lines, "")
-        table.insert(lines, "MOTIVATION")
-        table.insert(lines, c.motivation)
+        table.insert(lines, "BACKGROUND")
+        table.insert(lines, c.background)
     end
 
     if c.defining_moments and #c.defining_moments > 0 then
@@ -404,9 +404,9 @@ function UtilsCharacter.formatHTML(char, portrait_path, container_w, opts)
         p[#p+1] = '<div class="section"><div class="label">Identity</div><ul>'
             .. table.concat(items) .. '</ul></div>'
     end
-    if char.motivation and char.motivation ~= "" then
-        p[#p+1] = '<div class="section"><div class="label">Motivation</div><p>'
-            .. linkify(char.motivation) .. '</p></div>'
+    if char.background and char.background ~= "" then
+        p[#p+1] = '<div class="section"><div class="label">Background</div><p>'
+            .. linkify(char.background) .. '</p></div>'
     end
     if char.defining_moments and #char.defining_moments > 0 then
         local items = {}

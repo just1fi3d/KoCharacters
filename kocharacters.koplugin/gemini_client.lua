@@ -57,7 +57,7 @@ GeminiClient.MODELS = {
     {
         id           = "gemini-3-flash-preview",
         name         = "3 Flash",
-        description  = "Frontier intelligence at Flash speed. Better personality synthesis, motivation inference, and relationship nuance than Flash-Lite. Preview capacity limits may cause 503 errors. Paid tier only.",
+        description  = "Frontier intelligence at Flash speed. Better personality and background synthesis and relationship nuance than Flash-Lite. Preview capacity limits may cause 503 errors. Paid tier only.",
         input_price  = 0.250,
         output_price = 1.500,
         free_tier    = false,
@@ -100,7 +100,7 @@ Your tasks:
 1. Extract any NEW named characters who are introduced or significantly described in this passage.
 2. Update the profiles of EXISTING characters (listed below) who appear in this passage.
    - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace values that are already set. A previously blank field may be filled if the passage establishes information for it. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
-   - Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
+   - Rewrite as a fresh unified summary: personality, physical_description, background. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Existing character profiles to UPDATE (return updated profile only if they appear in this passage):
 {{existing}}
@@ -117,12 +117,12 @@ Rules:
 - For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
 - For name: use the most complete known name as the primary name. If a fuller name is established in this passage for a character currently known by a short name (e.g. "Sam" is confirmed to be "Sam Carter"), use the full name and put the short name in aliases.
 - For aliases: when the primary name has multiple parts and the text refers to the character by their given name alone (e.g. "Eleanor Vance" is called "Eleanor"), include that standalone given name in aliases. Only do this for personal given names — never for descriptors ("Unnamed", "Shepherd") or particles.
-- For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into at most 3–4 sentences. Do NOT append sentences to the existing text. Do NOT list events, actions, or scene-specific emotional reactions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
+- For personality: rewrite as a single unified description of stable character traits — incorporate the existing description and any new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into 1–2 sentences. Do NOT append sentences to the existing text. Do NOT list events, actions, or scene-specific emotional reactions. A character's situation, status, or history is never a trait — that material belongs in background, not personality.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. Do not infer appearance from actions. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). Do not describe clothing or gear worn in this particular scene unless it is established as characteristic of the character; never write "in this passage" or similar. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
 - Never append raw actions or scene summaries to any field. Every field should read like a character description, not a plot summary.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For identity_tags: capture core "what they are" markers — faction membership, social class, formal status, and demonstrated abilities. In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). In any setting, only include abilities the text explicitly establishes or acknowledges — never infer from personality. Update if the passage reveals a new identity (e.g. a secret role is unmasked, a faction is joined or left). Do not duplicate occupation.
-- For motivation: infer what the character fundamentally wants or fears. This is stable — only update it if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. Write as a concise summary of the character's deepest goals and fears — at most 3–4 sentences. If the existing motivation already captures the core drives, preserve it unchanged. Never list scene-level objectives as separate items. Fill only when there is textual evidence of a specific goal, fear, or belief — do not fabricate from role alone. Use empty string if none is established.
+- For background: a compact biography — who this character is, where they come from, and how they came to their current situation. Structure it origin-first: origin and backstory, then the key turns of their story so far, ending with ONE sentence on their current situation. At most 4–5 sentences (~100 words). On update, rewrite as a fresh synthesis: preserve the meaning of the existing origin and backstory sentences (compress them if space demands, but never drop them), fold genuinely new history into the middle, and replace the current-situation sentence as events move on. Only state facts the text establishes — never invent backstory, and never record goals, fears, or personality here. Use empty string if nothing is known yet.
 - For occupation: use the character's formal role, title, or profession. If not explicitly stated, infer from context or established identity (e.g. if the text establishes someone is a paladin or a general, use that). Do not leave blank simply because identity_tags already captures the role.
 - For defining_moments: only capture a "One-Way Door" event — one after which the character's status, body, or knowledge is permanently altered.
     Include: permanent injuries, social exile or promotion, discovering a plot-critical secret, joining or leaving a faction.
@@ -137,7 +137,7 @@ EXAMPLE — illustrative only; do not include this in your response:
 Input passage:
 The warden led Helena down a narrow infirmary corridor. A pale young woman in an orderly's apron looked up — her face disfigured by long deliberate scars running the length of each cheek. "Marino?" Her name was whispered so softly, it could have been a breeze. Helena recognised her: Grace, from the Resistance. She had done this to herself, Helena realised. Made herself ugly so they would not keep her.
 
-Existing: [{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter","Vivimancer"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant, she maintains defiant internal resolve despite profound trauma.","motivation":"Wants to survive her imprisonment and find a way to resist her captors.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}]
+Existing: [{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter","Vivimancer"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant, she maintains defiant internal resolve despite profound trauma.","background":"A vivimancer who fought for the Resistance until the city fell. She was captured by the regime and forcibly stripped of her resonance. She is now held prisoner and put to work in the regime's infirmary.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}]
 
 Skip: none
 
@@ -153,7 +153,7 @@ Correct output:
       "first_appearance_quote": "Helena wondered sometimes if she still had eyes.",
       "physical_description": "Frail and emaciated with matted black hair.",
       "personality": "Disciplined and observant, she maintains defiant internal resolve despite profound trauma.",
-      "motivation": "Wants to survive her imprisonment and find a way to resist her captors.",
+      "background": "A vivimancer who fought for the Resistance until the city fell. She was captured by the regime and forcibly stripped of her resonance. She is now held prisoner and put to work in the regime's infirmary.",
       "defining_moments": ["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],
       "role": "protagonist",
       "relationships": ["Kaine Ferron (captor)", "Grace (former Resistance comrade)"]
@@ -166,7 +166,7 @@ Correct output:
       "first_appearance_quote": "\"Marino?\" Her name was whispered so softly, it could have been a breeze.",
       "physical_description": "Pale with a youthful face disfigured by long, deliberate scars running the length of each cheek.",
       "personality": "Deeply traumatized and fearful, she exhibits a fierce survivalist pragmatism — willing to cause herself permanent harm to evade exploitation by the regime.",
-      "motivation": "Wants to survive the regime's occupation while protecting herself from exploitation.",
+      "background": "A Resistance member captured when the city fell. She deliberately scarred her own face so the Undying would not keep her, and now works as a hospital orderly under the regime.",
       "defining_moments": ["She intentionally scarred her own face to avoid being kept by the Undying."],
       "role": "supporting",
       "relationships": ["Helena Marino (former Resistance comrade)"]
@@ -176,9 +176,10 @@ Correct output:
 
 Key points shown above:
 - Grace's "Hospital orderly" is occupation; "Resistance survivor" and "Forced laborer" are identity_tags (social status under the regime) — never duplicate occupation in identity_tags.
-- Grace's personality is a trait summary ("fearful", "survivalist pragmatism") — not events ("she scarred herself").
+- Grace's personality is a trait summary ("fearful", "survivalist pragmatism") — not events ("she scarred herself"). The events live in her background and defining_moments.
+- Grace's background runs origin-first ("A Resistance member captured...") and ends with one sentence on her current situation.
 - Grace's defining_moment is a One-Way Door permanent change, one sentence, past tense.
-- Helena is returned only because she appears in the passage; her profile is updated minimally (new relationship and alias added, nothing else changed).
+- Helena is returned only because she appears in the passage; her profile is updated minimally (new relationship and alias added, nothing else changed). Her background is preserved because the passage reveals no new history about her.
 - The passage calls Helena Marino by her given name alone, so "Helena" is added to her aliases. Grace's name has only one part, so no alias is derived for her.
 - Relationships use the full name from the existing profiles: "Helena Marino", not "Helena".
 ---
@@ -194,8 +195,8 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
       "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — fill from explicit text or established identity; empty string only if genuinely unknown",
       "first_appearance_quote": "A short verbatim quote from the text where they first appear",
       "physical_description": "A concise summary of their appearance based on explicit descriptions only, else empty string",
-      "personality": "A concise summary of stable character traits inferred from their behaviour — written as description, not event log",
-      "motivation": "What drives this character at their core — their deepest goal, fear, or belief. Fill only when textual evidence supports a specific inference; empty string if none.",
+      "personality": "1–2 sentences on stable character traits inferred from their behaviour — written as description, not event log or status report",
+      "background": "Compact biography — origin and backstory first, key turns, ending with one sentence on the current situation. Only facts the text establishes; empty string if none.",
       "defining_moments": ["A One-Way Door event that permanently altered this character's status, body, or knowledge — one sentence, past tense. Only include if this passage contains one."],
       "role": "protagonist or antagonist or supporting",
       "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\", \"Kira (rival)\". One entry per named person."]
@@ -219,16 +220,16 @@ The character to update is:
 
 Read the passage below and update the character's profile.
 - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace values that are already set. A previously blank field may be filled if the passage establishes information for it. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
-- Rewrite as a fresh unified summary: personality, physical_description, motivation. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
+- Rewrite as a fresh unified summary: personality, physical_description, background. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
 
 Rules:
-- For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into at most 3–4 sentences. Do NOT append. Never list events, actions, or scene-specific emotional reactions.
-- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
+- For personality: rewrite as a single unified description of stable traits — incorporate the existing description and new observations into one coherent summary. Identify the 2–3 most defining stable traits; synthesize them into 1–2 sentences. Do NOT append. Never list events, actions, or scene-specific emotional reactions. A character's situation, status, or history is never a trait — that material belongs in background, not personality.
+- For physical_description: rewrite as a single unified description incorporating existing and new explicit appearance details only. No action-based inferences. Do not include transient states (temporary wounds, bruising, staining, or discoloration that may resolve). Do not describe clothing or gear worn in this particular scene unless it is established as characteristic of the character; never write "in this passage" or similar. If the passage contains no new explicit appearance details, copy physical_description unchanged from the existing profile. Aim for 2–4 sentences.
 - Never append raw actions or scene summaries to any field.
 - Never use time-relative words like "currently", "now", or "at this point" in any field — these are signs that scene state is being recorded as character trait.
 - For defining_moments: before adding a new entry, ask: does this produce a permanent change to this character's status, body, or knowledge that is not already captured by any existing entry? The test is the outcome — a second interrogation session is not a new entry if the permanent trauma or knowledge it produces is already recorded; a second exile is not a new entry if the character's outcast status is already captured. But a new injury to a different body part, a new faction joined, or a new secret discovered is a genuinely new outcome and should be recorded. Only append if yes. Never remove, rewrite, or consolidate existing entries — copy them verbatim into the output.
 - For identity_tags: update if the passage reveals a new core identity (secret role, faction change, formal status change, or an explicitly established ability). In hard magic systems, named ability classifications belong here ("Mistborn", "Feralchemist"). Only include abilities the text explicitly establishes or acknowledges — never infer from personality. Otherwise preserve unchanged.
-- For motivation: only update if the passage reveals a new explicit goal, fear, or belief the character has never expressed before. A character reacting emotionally to events is not a motivation update. If updating, write as a concise summary of the character's deepest goals and fears — at most 3–4 sentences; synthesize, never list scene-level objectives as separate items. If the existing motivation already captures the core drives, preserve it unchanged.
+- For background: a compact biography — who this character is, where they come from, and how they came to their current situation. Structure it origin-first: origin and backstory, then the key turns of their story so far, ending with ONE sentence on their current situation. At most 4–5 sentences (~100 words). Rewrite as a fresh synthesis: preserve the meaning of the existing origin and backstory sentences (compress them if space demands, but never drop them), fold genuinely new history into the middle, and replace the current-situation sentence as events move on. Only state facts the text establishes — never invent backstory, and never record goals, fears, or personality here. If the passage reveals no new history, copy background unchanged.
 - For aliases: when the primary name has multiple parts and the passage refers to the character by their given name alone (e.g. "Eleanor Vance" is called "Eleanor"), add that standalone given name to aliases if not already present. Only do this for personal given names — never for descriptors ("Unnamed", "Shepherd") or particles.
 - For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
@@ -237,18 +238,18 @@ Rules:
 EXAMPLE — illustrative only; do not include this in your response:
 
 Character to update:
-{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}
+{"name":"Helena Marino","aliases":[],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair.","personality":"Disciplined and observant.","background":"A Resistance fighter captured when the city fell. She was forcibly stripped of her resonance and is now held prisoner by the regime.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)"]}
 
 Passage:
 Helena moved through the crowded mess hall without drawing attention, cataloguing faces. She had learned from Kaine Ferron's sessions what it cost to be noticed — stillness was its own armour. Her collar-bones showed sharp above her prison shift. Warden Tane watched her from the doorway, expression flat.
 
 Correct output:
-[{"name":"Helena Marino","aliases":["Helena"],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair; her collar-bones are prominently visible.","personality":"Disciplined and self-contained, she moves through dangerous spaces with deliberate invisibility — cataloguing people before allowing herself to react.","motivation":"Wants to survive her imprisonment.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)","Warden Tane (guard)"]}]
+[{"name":"Helena Marino","aliases":["Helena"],"identity_tags":["Prisoner","Resistance fighter"],"occupation":"","first_appearance_quote":"Helena wondered sometimes if she still had eyes.","physical_description":"Frail and emaciated with matted black hair; her collar-bones are prominently visible.","personality":"Disciplined and self-contained, she moves through dangerous spaces with deliberate invisibility — cataloguing people before allowing herself to react.","background":"A Resistance fighter captured when the city fell. She was forcibly stripped of her resonance and is now held prisoner by the regime.","defining_moments":["She was subjected to a forced surgical procedure that permanently suppressed her resonance."],"role":"protagonist","relationships":["Kaine Ferron (captor)","Warden Tane (guard)"]}]
 
 Key points shown above:
 - personality is a fresh unified rewrite, not an append — not "Disciplined and observant. She has learned to move without drawing attention."
 - physical_description incorporates new explicit detail from the passage.
-- motivation and defining_moments are unchanged — nothing in this passage warrants updating them.
+- background and defining_moments are unchanged — the passage reveals no new history about the character.
 - The passage calls Helena Marino by her given name alone, so "Helena" is added to aliases.
 - "Kaine Ferron" uses the exact name from the existing profile, not "Ferron" or "Kaine".
 - Warden Tane is added as a new relationship using the name as it appears in the passage.
@@ -265,8 +266,8 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "occupation": "Job title, profession, or social role (e.g. blacksmith, governess, army captain) — fill from explicit text or established identity; empty string only if genuinely unknown",
     "first_appearance_quote": "Keep existing quote unless a better one is found in this passage",
     "physical_description": "Merged appearance summary — explicit descriptions only",
-    "personality": "Merged personality summary — stable traits inferred from behaviour, written as description not event log",
-    "motivation": "What drives this character at their core — stable goal, fear, or belief. Fill only when textual evidence supports a specific inference; empty string if none.",
+    "personality": "Merged personality summary — 1–2 sentences of stable traits inferred from behaviour, written as description not event log or status report",
+    "background": "Compact biography — origin and backstory first, key turns, ending with one sentence on the current situation. Only facts the text establishes; empty string if none.",
     "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
     "role": "protagonist or antagonist or supporting",
     "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\". One entry per named person."]
@@ -318,12 +319,12 @@ You are cleaning up a character profile from a book. Some text fields contain re
 Clean up each text field:
 - Remove repetitions and redundant phrases
 - Combine fragmented observations into a single fluent description
-- If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to at most 3–4 sentences; if it is already a focused trait description within that length, preserve it.
-- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
+- If personality reads like a list of events or actions, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to 1–2 sentences of stable traits. Move any situation, status, or history statements ("is now catatonic", "currently a prisoner") out of personality — fold them into background instead.
+- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) and any scene-specific clothing or "in this passage" phrasing — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
-- For defining_moments: remove exact or near-verbatim duplicates only — entries that clearly describe the same specific event worded differently. Do NOT consolidate entries that describe distinct events, even if they fall into the same broad category (e.g. two separate permanent injuries are two separate One-Way Door events and must remain as separate entries). Ensure each remaining entry reads as a permanent state change, not a scene description.
-- For motivation: synthesize into a concise summary of the character's deepest goals and fears — at most 3–4 sentences. Collapse multiple accumulated items into the core drives; never list scene-level objectives as separate items. If it is already a focused summary of core drives within that length, preserve it.
+- For defining_moments: merge entries that record the same permanent outcome — exact or near-verbatim duplicates, and multiple entries logging the progressive worsening of the same injury or status. If two entries record a change and its later reversal (e.g. a device removed, then re-fitted), collapse them into one entry stating the final state. Do NOT drop or consolidate entries that describe genuinely distinct events (two injuries to different body parts are two separate One-Way Door events and must remain separate). Ensure each remaining entry reads as a permanent state change, not a scene description.
+- For background: synthesize into a compact biography of at most 4–5 sentences — origin and backstory first, then key turns, ending with one sentence on the current situation. If it has decayed into only recent events, rebuild the full arc from defining_moments and the other fields. Never record goals, fears, or personality here. If it is already a focused origin-first biography within that length, preserve it.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
@@ -337,7 +338,7 @@ Return ONLY a valid JSON object (no markdown, no code fences) with exactly these
   "identity_tags": ["..."],
   "physical_description": "...",
   "personality": "...",
-  "motivation": "...",
+  "background": "...",
   "defining_moments": ["..."],
   "relationships": ["..."],
   "role": "..."
@@ -347,15 +348,16 @@ Return ONLY a valid JSON object (no markdown, no code fences) with exactly these
 EXAMPLE — illustrative only; do not include this in your response:
 
 Input:
-{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
+{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","background":"A doctor serving the regime.; She trained under Artemon Bennet and is currently assigned to interrogate the prisoner Helena.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
 
 Correct output:
-{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
+{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results.","background":"A doctor who trained under Artemon Bennet and serves the regime. She is assigned to interrogate the prisoner Helena.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}
 
 Key points shown above:
 - Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
 - Case-duplicate identity_tags ("Regime official" and "Regime Official") are collapsed into one canonical form.
-- Personality: two overlapping semicolon-joined paragraphs merged into one coherent description with no repeated ideas.
+- Personality: two overlapping semicolon-joined paragraphs synthesized down to a short trait description with no repeated ideas.
+- Background: semicolon fragments merged into an origin-first biography; "currently assigned" rephrased as the closing current-situation sentence.
 ---
 
 Character profile to clean:
@@ -707,33 +709,34 @@ You are cleaning up character profiles from a book. Some text fields contain rep
 For each character, clean up the text fields:
 - Remove repetitions and redundant phrases
 - Combine fragmented observations into fluent descriptions
-- If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to at most 3–4 sentences; if it is already a focused trait description within that length, preserve it.
-- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
+- If personality reads like a list of actions or events, rewrite it as a trait summary (e.g. "attacked the guard when cornered; fought to protect his sister" → "fiercely protective and willing to use violence when threatened"). Synthesize to 1–2 sentences of stable traits. Move any situation, status, or history statements ("is now catatonic", "currently a prisoner") out of personality — fold them into background instead.
+- For physical_description: remove any transient states (temporary wounds, bruising, staining, or discoloration that may resolve) and any scene-specific clothing or "in this passage" phrasing — keep only stable, permanent traits. Combine fragmented observations into a single fluent description of at most 2–4 sentences.
 - Do not add new information not present in the original fields
 - For identity_tags: consolidate similar tags (e.g. merge "Soldier" and "Infantryman" into the more specific one). Remove duplicates.
-- For defining_moments: remove exact or near-verbatim duplicates only — entries that clearly describe the same specific event worded differently. Do NOT consolidate entries that describe distinct events, even if they fall into the same broad category (e.g. two separate permanent injuries are two separate One-Way Door events and must remain as separate entries). Ensure each remaining entry reads as a permanent state change, not a scene description.
-- For motivation: synthesize into a concise summary of the character's deepest goals and fears — at most 3–4 sentences. Collapse multiple accumulated items into the core drives; never list scene-level objectives as separate items. If it is already a focused summary of core drives within that length, preserve it.
+- For defining_moments: merge entries that record the same permanent outcome — exact or near-verbatim duplicates, and multiple entries logging the progressive worsening of the same injury or status. If two entries record a change and its later reversal (e.g. a device removed, then re-fitted), collapse them into one entry stating the final state. Do NOT drop or consolidate entries that describe genuinely distinct events (two injuries to different body parts are two separate One-Way Door events and must remain separate). Ensure each remaining entry reads as a permanent state change, not a scene description.
+- For background: synthesize into a compact biography of at most 4–5 sentences — origin and backstory first, then key turns, ending with one sentence on the current situation. If it has decayed into only recent events, rebuild the full arc from defining_moments and the other fields. Never record goals, fears, or personality here. If it is already a focused origin-first biography within that length, preserve it.
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person — if a shortened name in a relationship (e.g. "Helena") matches a character who appears by full name elsewhere in this batch (e.g. "Helena Marino"), expand it to the full name.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
 - For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
-[{ "name": "...", "aliases": ["..."], "occupation": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "motivation": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
+[{ "name": "...", "aliases": ["..."], "occupation": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "background": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
 
 Input:
-[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
+[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"identity_tags":["Regime official","Regime Official","Vivimancer","Interrogator"],"occupation":"Doctor","physical_description":"A woman with a face marked by lines of stark tension, often seen in severe shadows.; She has a squarish face with impatiently pursed lips and blue eyes with deep creases between them; she wears a medical uniform.","personality":"A cold, authoritative, and sharp-tongued professional who maintains a ruthless, unempathetic demeanor focused entirely on the success of her interrogations.; Cold, clinical, and highly professional, she views human subjects as data points. She is prone to intellectual excitement when encountering anomalies, yet remains entirely ruthless in her application of vivimancy to extract information.","background":"A doctor serving the regime.; She trained under Artemon Bennet and is currently assigned to interrogate the prisoner Helena.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
 
 Correct output:
-[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results. She displays intellectual excitement when encountering anomalies but remains entirely merciless in her application of vivimancy.","motivation":"To uncover the secrets hidden within Helena's mind for the regime.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
+[{"name":"Doctor Stroud","aliases":["Unnamed Interrogator"],"occupation":"Doctor","identity_tags":["Regime Official","Vivimancer","Interrogator"],"physical_description":"A woman with a squarish face, impatiently pursed lips, and blue eyes with deep creases; her expression carries an air of stark tension and she wears a medical uniform.","personality":"Cold, clinical, and authoritative, she views human subjects as data points and maintains a ruthless, unempathetic focus on results.","background":"A doctor who trained under Artemon Bennet and serves the regime. She is assigned to interrogate the prisoner Helena.","defining_moments":[],"relationships":["Helena (interrogator)","Morrough (superior)"],"role":"antagonist"}]
 
 Key points shown above:
 - Semicolon-joined fragments ("...shadows.; She has...") are merged into one fluent sentence.
 - Case-duplicate identity_tags ("Regime official" and "Regime Official") are collapsed into one canonical form.
-- Personality: two overlapping semicolon-joined paragraphs merged into one coherent description with no repeated ideas.
+- Personality: two overlapping semicolon-joined paragraphs synthesized down to a short trait description with no repeated ideas.
+- Background: semicolon fragments merged into an origin-first biography; "currently assigned" rephrased as the closing current-situation sentence.
 - Output is a JSON array with exactly the same number of elements as the input, in the same order.
 ---
 
