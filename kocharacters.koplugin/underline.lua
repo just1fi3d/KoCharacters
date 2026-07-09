@@ -169,17 +169,20 @@ local function normApostrophe(s)
     return (s:gsub("\226\128\153", "'"))
 end
 
--- Returns name_low -> { text = original-case name, kind = "char"|"codex" }.
+-- Returns name_low -> { text = original-case name, kind = "char"|"codex",
+-- token = true for standalone name-part tokens }.
 -- Character names win over aliases, characters win over codex entries, and
 -- standalone name-part tokens come last so they never shadow an exact name.
 function Underline:_buildTargets()
     local targets = {}
-    local function add(text, kind)
+    local function add(text, kind, is_token)
         if type(text) ~= "string" then return end
         text = text:match("^%s*(.-)%s*$") or ""
         if #text < MIN_NAME_LEN or text:find("\n") then return end
         local low = normApostrophe(text):lower()
-        if not targets[low] then targets[low] = { text = text, kind = kind } end
+        if not targets[low] then
+            targets[low] = { text = text, kind = kind, token = is_token or nil }
+        end
     end
 
     local book_id = self.plugin:getBookID()
@@ -215,7 +218,7 @@ function Underline:_buildTargets()
                     token = token:gsub("^%p+", ""):gsub("%p+$", "")
                     if #token >= 4 and not token:match("^[%l%d]")
                         and not token:find("'") and not token:find("\226\128\153") then
-                        add(token, "char")
+                        add(token, "char", true)
                     end
                 end
             end
@@ -243,9 +246,23 @@ local function reEscape(s)
     return table.concat(out)
 end
 
+-- Full names may appear lowercase in prose (codex entries for common nouns:
+-- "casks of buinath") or start with a lowercased article ("the Palm"), while
+-- the stored name is capitalized — so the first letter matches either case.
+-- Later letters stay case-sensitive: "The Palm" must not match "the palm"
+-- (the hand), and name-part tokens stay fully case-sensitive so "Lower"
+-- can't underline ordinary prose.
+local function firstLetterCaseClass(esc)
+    local c = esc:sub(1, 1)
+    local u, l = c:upper(), c:lower()
+    if u == l then return esc end
+    return "[" .. u .. l .. "]" .. esc:sub(2)
+end
+
 -- Bump when scan semantics change (v2: apostrophe normalisation + name-part
--- tokens); a version mismatch discards the cache so old books rescan.
-local CACHE_VERSION = 2
+-- tokens; v3: case-tolerant word-initial letters for full names); a version
+-- mismatch discards the cache so old books rescan.
+local CACHE_VERSION = 3
 
 function Underline:_cachePath(book_id)
     return self.plugin.db:bookDir(book_id) .. "/underline_cache.json"
@@ -306,7 +323,9 @@ end
 function Underline:_scanNames(doc, names, targets)
     local alts = {}
     for _, name_low in ipairs(names) do
-        local esc = reEscape(normApostrophe(targets[name_low].text))
+        local target = targets[name_low]
+        local esc = reEscape(normApostrophe(target.text))
+        if not target.token then esc = firstLetterCaseClass(esc) end
         -- Match either apostrophe form in the book text
         alts[#alts + 1] = (esc:gsub("'", "['\226\128\153]"))
     end
