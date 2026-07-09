@@ -317,7 +317,7 @@ function UICharacter.onEditCharacter(plugin, book_id, char, refresh_browser_fn, 
                 callback = function()
                     local role_menu
                     local role_items = {}
-                    for _, r in ipairs({"protagonist","antagonist","supporting","unknown"}) do
+                    for _, r in ipairs({"protagonist","antagonist","supporting","minor","unknown"}) do
                         local role = r
                         table.insert(role_items, {
                             text     = role,
@@ -760,6 +760,11 @@ function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
     end
 
     -- Sort
+    local ROLE_ORDER  = { protagonist = 1, antagonist = 2, supporting = 3, minor = 4 }
+    local ROLE_HEADER = { "Protagonists", "Antagonists", "Supporting", "Minor", "Unknown" }
+    local function roleBucket(c)
+        return ROLE_ORDER[c.role or "unknown"] or 5
+    end
     local sorted = {}
     for _, c in ipairs(filtered) do table.insert(sorted, c) end
     if sort_mode == "name" then
@@ -767,10 +772,8 @@ function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
             return (a.name or ""):lower() < (b.name or ""):lower()
         end)
     elseif sort_mode == "role" then
-        local order = { protagonist = 1, antagonist = 2, supporting = 3, unknown = 4 }
         table.sort(sorted, function(a, b)
-            local ra = order[a.role or "unknown"] or 4
-            local rb = order[b.role or "unknown"] or 4
+            local ra, rb = roleBucket(a), roleBucket(b)
             if ra ~= rb then return ra < rb end
             return (a.name or ""):lower() < (b.name or ""):lower()
         end)
@@ -839,8 +842,20 @@ function UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
         UICharacter.showCharacterBrowser(plugin, book_id, sort_mode, query)
     end
 
-    -- Character items
+    -- Character items (with a section header per role when sorting by role)
+    local last_bucket
     for _, c in ipairs(sorted) do
+        if sort_mode == "role" then
+            local bucket = roleBucket(c)
+            if bucket ~= last_bucket then
+                last_bucket = bucket
+                table.insert(items, {
+                    text     = "— " .. ROLE_HEADER[bucket] .. " —",
+                    bold     = true,
+                    callback = function() end,
+                })
+            end
+        end
         local name      = c.name or "Unknown"
         local role      = (c.role and c.role ~= "" and c.role ~= "unknown")
                           and (" [" .. c.role .. "]") or ""

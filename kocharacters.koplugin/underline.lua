@@ -203,12 +203,15 @@ function Underline:_buildTargets()
 
     -- Standalone name parts: "Rovigo" from "Rovigo d'Astibar" should still be
     -- underlined when it appears alone. Tokens of ≥4 chars are added for
-    -- characters only, rejecting lowercase-initial tokens (particles like
-    -- "van", "della") but accepting non-ASCII initials ("Éanna") that %u
-    -- can't classify; case-sensitive matching keeps common-word tokens
-    -- (e.g. "Lower") from hitting ordinary prose. Tokens containing an
-    -- apostrophe ("d'Astibar") are skipped — with several characters sharing a
-    -- locative surname a tap on it would be ambiguous.
+    -- characters only, and only up to the first lowercase-initial token:
+    -- everything after a particle ("of", "di", "bar") is a locative or
+    -- patronymic reference to something other than this character — "Garin of
+    -- Lower Corte" must not claim standalone "Corte" (the province), and
+    -- "Devin d'Asoli bar Garin" must not claim "Garin" (the father).
+    -- Non-ASCII initials ("Éanna"), which %l can't classify, don't stop the
+    -- scan. Tokens containing an apostrophe ("d'Astibar") are skipped — with
+    -- several characters sharing a locative surname a tap on it would be
+    -- ambiguous.
     for _, c in ipairs(chars) do
         local names = { c.name }
         for _, alias in ipairs(c.aliases or {}) do names[#names + 1] = alias end
@@ -216,7 +219,8 @@ function Underline:_buildTargets()
             if type(full) == "string" then
                 for token in full:gmatch("%S+") do
                     token = token:gsub("^%p+", ""):gsub("%p+$", "")
-                    if #token >= 4 and not token:match("^[%l%d]")
+                    if token:match("^[%l%d]") then break end
+                    if #token >= 4
                         and not token:find("'") and not token:find("\226\128\153") then
                         add(token, "char", true)
                     end
@@ -260,9 +264,10 @@ local function firstLetterCaseClass(esc)
 end
 
 -- Bump when scan semantics change (v2: apostrophe normalisation + name-part
--- tokens; v3: case-tolerant word-initial letters for full names); a version
--- mismatch discards the cache so old books rescan.
-local CACHE_VERSION = 3
+-- tokens; v3: case-tolerant word-initial letters for full names; v4: name-part
+-- tokens stop at the first lowercase-initial word); a version mismatch
+-- discards the cache so old books rescan.
+local CACHE_VERSION = 4
 
 function Underline:_cachePath(book_id)
     return self.plugin.db:bookDir(book_id) .. "/underline_cache.json"

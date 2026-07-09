@@ -61,12 +61,37 @@ function UtilsCharacter.levenshtein(a, b)
     return prev[lb]
 end
 
--- Returns true when two already-lowercased names share a word token of ≥4 chars.
--- "Kaine Ferron" / "Ferron" → true (shared word). "Temper" / "Temperance" → false.
+-- Locative/patronymic particles: everything after one of these in a name is a
+-- place or ancestor reference, not a personal name ("Burnet di Corte",
+-- "Garin of Lower Corte", "Devin d'Asoli bar Garin").
+local NAME_PARTICLES = {
+    ["of"] = true, ["the"] = true, ["from"] = true,
+    ["di"] = true, ["de"] = true, ["del"] = true, ["della"] = true,
+    ["da"] = true, ["du"] = true, ["la"] = true, ["le"] = true,
+    ["van"] = true, ["von"] = true, ["der"] = true, ["den"] = true,
+    ["bar"] = true, ["ben"] = true, ["ibn"] = true,
+}
+
+-- Word tokens of ≥4 chars up to (not including) the first particle.
+local function significantWords(low)
+    local words = {}
+    for w in low:gmatch("%S+") do
+        if NAME_PARTICLES[w] then break end
+        if #w >= 4 then words[w] = true end
+    end
+    return words
+end
+
+-- Returns true when two already-lowercased names share a personal-name word
+-- token of ≥4 chars. "Kaine Ferron" / "Ferron" → true (shared word).
+-- "Temper" / "Temperance" → false. "Burnet di Corte" / "Garin of Lower Corte"
+-- → false: the shared word is locative, and two characters sharing a home
+-- region are not duplicates.
 local function sharesSignificantWord(a_low, b_low)
-    local wa = {}
-    for w in a_low:gmatch("%S+") do if #w >= 4 then wa[w] = true end end
-    for w in b_low:gmatch("%S+") do if #w >= 4 and wa[w] then return true end end
+    local wa = significantWords(a_low)
+    for w in pairs(significantWords(b_low)) do
+        if wa[w] then return true end
+    end
     return false
 end
 

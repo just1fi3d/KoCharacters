@@ -97,7 +97,7 @@ GeminiClient.DEFAULT_EXTRACTION_PROMPT = [[
 You are analyzing a passage from a novel or book.
 
 Your tasks:
-1. Extract any NEW named characters who are introduced or significantly described in this passage.
+1. Extract any NEW named characters this passage tells us something concrete about — even minor ones mentioned in a single sentence.
 2. Update the profiles of EXISTING characters (listed below) who appear in this passage.
    - Preserve exactly: name, aliases, occupation, role, relationships, first_appearance_quote, identity_tags, defining_moments. These fields are additive — you may add new values if the passage reveals them, but never remove, shorten, or replace values that are already set. A previously blank field may be filled if the passage establishes information for it. A character behaving differently in this passage is not a reason to remove prior aliases, tags, or relationships.
    - Rewrite as a fresh unified summary: personality, physical_description, background. Treat the existing value as input — incorporate it with any new observations into one coherent description. Never append sentences to the existing text.
@@ -111,7 +111,7 @@ Characters to SKIP entirely (do not return these):
 Rules:
 - Only include characters who have a name (first name, last name, or title+name). Skip unnamed background figures.
 - For existing characters: only return them if they actually appear in this passage.
-- For new characters: only include if there is enough information to build a meaningful profile.
+- For new characters: include any named character the passage establishes at least one concrete attribute for — an occupation, an appearance detail, a relationship, or an action they perform in the scene. A named dancer whose costume is described, or a rival mentioned once with their profession, qualifies. Sparse profiles are fine: fill what the passage establishes and leave the rest as empty strings; later passages will enrich them. Skip a name only when nothing at all is knowable about its bearer (a bare name-drop in a song, list, or oath).
 - If there is nothing to report, return an empty JSON array: []
 - Never use placeholder text such as "Not specified.", "Unknown", or "N/A" in any field. Use an empty string if information is unavailable.
 - For book_context: start from the current known context ("{{book_context}}") and expand it with anything the passage reveals about genre, setting, country/region, or era. Write as 2-3 sentences. If the passage adds nothing new, return it unchanged. Leave as empty string only if nothing at all is known.
@@ -129,7 +129,7 @@ Rules:
     Exclude: combat without consequence, travel, standard dialogue, temporary moods, and any event whose permanent outcome is already captured by an existing entry. The test is the outcome: a second interrogation session is not a new entry if the permanent knowledge or trauma it produces is already recorded; a second exile is not a new entry if the character's outcast status is already captured. But a new injury to a different body part, a new faction joined, or a new secret discovered is a genuinely new outcome and should be recorded.
   Each entry must be one sentence in past tense. Before adding a new entry, ask: does this produce a permanent change to this character's status, body, or knowledge that is not already captured by any existing entry? Only append if yes. Never remove, rewrite, or consolidate existing entries — copy them verbatim into the output.
 - For relationships: use the exact name as it appears in the existing profiles list above — not a shortened or alternate form. If an existing character is named "Amanda Clarke", write "Amanda Clarke (ally)", never "Amanda (ally)". Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)", "Kira (rival)", "The King (ally)". One entry per named person. Never write "Brother to Amanda" or "Amanda - Sister" style.
-- For role: default to "supporting" rather than "unknown" unless there is a clear reason the character cannot be classified.
+- For role: valid values are "protagonist", "antagonist", "supporting", and "minor". Use "minor" for named characters who play only an incidental part so far — briefly mentioned, or present without influencing events. Otherwise default to "supporting" rather than "unknown". Never demote an existing character's role to "minor"; a minor character may be promoted when later passages give them a larger part.
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
@@ -198,7 +198,7 @@ Return ONLY a valid JSON object with no markdown formatting, no code fences, no 
       "personality": "1–2 sentences on stable character traits inferred from their behaviour — written as description, not event log or status report",
       "background": "Compact biography — origin and backstory first, key turns, ending with one sentence on the current situation. Only facts the text establishes; empty string if none.",
       "defining_moments": ["A One-Way Door event that permanently altered this character's status, body, or knowledge — one sentence, past tense. Only include if this passage contains one."],
-      "role": "protagonist or antagonist or supporting",
+      "role": "protagonist or antagonist or supporting or minor",
       "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\", \"Kira (rival)\". One entry per named person."]
     }
   ]
@@ -232,7 +232,7 @@ Rules:
 - For background: a compact biography — who this character is, where they come from, and how they came to their current situation. Structure it origin-first: origin and backstory, then the key turns of their story so far, ending with ONE sentence on their current situation. At most 4–5 sentences (~100 words). Rewrite as a fresh synthesis: preserve the meaning of the existing origin and backstory sentences (compress them if space demands, but never drop them), fold genuinely new history into the middle, and replace the current-situation sentence as events move on. Only state facts the text establishes — never invent backstory, and never record goals, fears, or personality here. If the passage reveals no new history, copy background unchanged.
 - For aliases: when the primary name has multiple parts and the passage refers to the character by their given name alone (e.g. "Eleanor Vance" is called "Eleanor"), add that standalone given name to aliases if not already present. Only do this for personal given names — never for descriptors ("Unnamed", "Shepherd") or particles.
 - For relationships: use the exact name as it appears in the existing character profile above — not a shortened or alternate form. Format each entry as "Name (relationship type)". Examples: "Amanda (sister)", "Lord Vance (employer)". One entry per named person.
-- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
+- For role: valid values are "protagonist", "antagonist", "supporting", or "minor". If the existing role is one of these, preserve it. Default to "supporting" rather than "unknown".
 
 ---
 EXAMPLE — illustrative only; do not include this in your response:
@@ -269,7 +269,7 @@ Return ONLY a valid JSON array with no markdown formatting, no code fences, no e
     "personality": "Merged personality summary — 1–2 sentences of stable traits inferred from behaviour, written as description not event log or status report",
     "background": "Compact biography — origin and backstory first, key turns, ending with one sentence on the current situation. Only facts the text establishes; empty string if none.",
     "defining_moments": ["One-Way Door events that permanently altered this character — one sentence each, past tense"],
-    "role": "protagonist or antagonist or supporting",
+    "role": "protagonist or antagonist or supporting or minor",
     "relationships": ["Name (relationship type) — e.g. \"Amanda (sister)\", \"Lord Vance (employer)\". One entry per named person."]
   }
 ]
@@ -328,7 +328,7 @@ Clean up each text field:
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
-- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
+- For role: valid values are "protagonist", "antagonist", "supporting", or "minor". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly these keys:
 {
@@ -718,7 +718,7 @@ For each character, clean up the text fields:
 - For relationships: normalize each entry to "Name (relationship type)" format. E.g. "Brother to Amanda" → "Amanda (brother)", "Amanda — Sister" → "Amanda (sister)", "rival of Kira" → "Kira (rival)". Deduplicate after normalizing. Use the most complete known name for each person — if a shortened name in a relationship (e.g. "Helena") matches a character who appears by full name elsewhere in this batch (e.g. "Helena Marino"), expand it to the full name.
 - For name and aliases: if a more complete name appears in the aliases array (e.g. name is "Sam" but aliases contains "Sam Carter"), promote the fuller name to the primary name field and move the shorter name into aliases. Only promote if the aliased version is clearly more complete, not merely a title variant (e.g. do not promote "Captain Vance" over "Vance").
 - For occupation: preserve as-is. Replace placeholder text ("Not specified.", "Unknown", "N/A") with empty string.
-- For role: valid values are "protagonist", "antagonist", or "supporting". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
+- For role: valid values are "protagonist", "antagonist", "supporting", or "minor". If the existing role is one of these, preserve it. If it is blank or unclear, default to "supporting".
 
 Return ONLY a valid JSON array (no markdown, no code fences) with the same number of characters in the same order. Each element must have exactly these keys:
 [{ "name": "...", "aliases": ["..."], "occupation": "...", "identity_tags": ["..."], "physical_description": "...", "personality": "...", "background": "...", "defining_moments": ["..."], "relationships": ["..."], "role": "..." }]
