@@ -320,18 +320,19 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
             },
             {
                 {
-                    -- Converts the entry: exactly one home per entity. Extraction
-                    -- skips codex names as characters, so an entity that becomes an
+                    -- Converts the entry: exactly one home per entity. Mirrors
+                    -- "Move to codex" in the character viewer. Extraction skips
+                    -- codex names as characters, so an entity that becomes an
                     -- active character (e.g. a deity walking the story) must be
                     -- moved to the character side explicitly.
-                    text = "Track as character",
+                    text = "Move to characters",
                     callback = function()
                         close_fn()
                         UIManager:show(ConfirmBox:new{
-                            text        = 'Track "' .. name .. '" as a character?\n\n'
+                            text        = 'Move "' .. name .. '" to characters?\n\n'
                                           .. "The codex entry will be converted: new information "
                                           .. "will go to their character profile from now on.",
-                            ok_text     = "Convert",
+                            ok_text     = "Move",
                             ok_callback = function()
                                 local background = entry.description or ""
                                 if entry.significance and entry.significance ~= "" then

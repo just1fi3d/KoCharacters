@@ -95,7 +95,7 @@ function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done
     -- (deity, place, concept) must not also become a character — two entries
     -- would silently split each new fact between them. Names that already
     -- exist as characters pass through (normal update flow); converting a
-    -- codex entity is done explicitly via "Track as character" in its viewer.
+    -- codex entity is done explicitly via "Move to characters" in its viewer.
     local char_set = {}
     for _, c in ipairs(existing) do char_set[(c.name or ""):lower()] = true end
     local codex_set = {}
@@ -571,8 +571,8 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 end,
             })
         end
-        -- Converts the entry: exactly one home per entity. Mirrors "Track as
-        -- character" on the codex side — for names extraction wrongly treated
+        -- Converts the entry: exactly one home per entity. Mirrors "Move to
+        -- characters" on the codex side — for names extraction wrongly treated
         -- as people (deities, orders, places). Type defaults to "concept";
         -- codex cleanup validates it against the taxonomy.
         local function do_move_to_codex()
@@ -581,7 +581,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 text        = 'Move "' .. name .. '" to the codex?\n\n'
                               .. "The character entry will be converted: new information "
                               .. "will go to its codex entry from now on.",
-                ok_text     = "Convert",
+                ok_text     = "Move",
                 ok_callback = function()
                     local parts = {}
                     for _, s in ipairs({ char.background, char.physical_description, char.personality }) do
@@ -607,7 +607,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
         return {
             {
                 { text = "Clean up",   callback = function() close_fn(); UICharacter.onCleanCharacter(plugin, book_id, char.name) end },
-                { text = "To codex",   callback = do_move_to_codex },
+                { text = "Move to codex", callback = do_move_to_codex },
                 { text = "Edit",       callback = function()
                     close_fn()
                     local function show_viewer_fn()

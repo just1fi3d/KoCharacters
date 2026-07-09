@@ -465,7 +465,7 @@ end
 -- two entries silently splitting each new fact between them is worse than
 -- either home alone. A name that already exists as a character stays on the
 -- character side. To track a codex entity as a character, convert it via
--- "Track as character" in the codex entry viewer.
+-- "Move to characters" in the codex entry viewer.
 function Extraction:_buildSkipLists(book_id, text_lower)
     local skip_names, chars_in_text = {}, {}
     local char_names = {}
