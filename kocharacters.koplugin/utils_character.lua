@@ -73,10 +73,12 @@ local NAME_PARTICLES = {
 }
 
 -- Word tokens of ≥4 chars up to (not including) the first particle.
+-- An apostrophe contraction ("d'Astibar", ASCII or typographic) is a particle
+-- fused to its locative surname — it stops the scan the same way "di" would.
 local function significantWords(low)
     local words = {}
     for w in low:gmatch("%S+") do
-        if NAME_PARTICLES[w] then break end
+        if NAME_PARTICLES[w] or w:match("^%a'") or w:match("^%a\226\128\153") then break end
         if #w >= 4 then words[w] = true end
     end
     return words
@@ -85,8 +87,9 @@ end
 -- Returns true when two already-lowercased names share a personal-name word
 -- token of ≥4 chars. "Kaine Ferron" / "Ferron" → true (shared word).
 -- "Temper" / "Temperance" → false. "Burnet di Corte" / "Garin of Lower Corte"
--- → false: the shared word is locative, and two characters sharing a home
--- region are not duplicates.
+-- and "Catriana d'Astibar" / "Tomasso d'Astibar bar Sandre" → false: the
+-- shared word is locative, and two characters sharing a home region are not
+-- duplicates.
 local function sharesSignificantWord(a_low, b_low)
     local wa = significantWords(a_low)
     for w in pairs(significantWords(b_low)) do
@@ -154,6 +157,17 @@ function UtilsCharacter.deduplicateIncoming(chars, distinct_pairs)
                         if (a.personality == nil or a.personality == "")
                             and b.personality and b.personality ~= "" then
                             a.personality = b.personality
+                        end
+                        -- Keep the dropped name as an alias so the collapse is
+                        -- never silently lossy — it still underlines and still
+                        -- matches on later extractions.
+                        if b.name and b.name ~= "" and b.name ~= a.name then
+                            a.aliases = a.aliases or {}
+                            local present = false
+                            for _, al in ipairs(a.aliases) do
+                                if al == b.name then present = true; break end
+                            end
+                            if not present then table.insert(a.aliases, b.name) end
                         end
                         removed[j] = true
                     end
