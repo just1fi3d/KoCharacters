@@ -318,6 +318,45 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
                     end,
                 },
             },
+            {
+                {
+                    -- Converts the entry: exactly one home per entity. Extraction
+                    -- skips codex names as characters, so an entity that becomes an
+                    -- active character (e.g. a deity walking the story) must be
+                    -- moved to the character side explicitly.
+                    text = "Track as character",
+                    callback = function()
+                        close_fn()
+                        UIManager:show(ConfirmBox:new{
+                            text        = 'Track "' .. name .. '" as a character?\n\n'
+                                          .. "The codex entry will be converted: new information "
+                                          .. "will go to their character profile from now on.",
+                            ok_text     = "Convert",
+                            ok_callback = function()
+                                local background = entry.description or ""
+                                if entry.significance and entry.significance ~= "" then
+                                    background = background ~= ""
+                                        and (background .. " " .. entry.significance)
+                                        or entry.significance
+                                end
+                                plugin.db:merge(book_id, { {
+                                    name            = name,
+                                    aliases         = entry.aliases or {},
+                                    role            = "supporting",
+                                    background      = background,
+                                    relationships   = entry.known_connections or {},
+                                    first_seen_page = entry.first_seen_page,
+                                    unlocked        = true,
+                                } }, entry.first_seen_page)
+                                plugin.db_codex:deleteEntry(book_id, name)
+                                plugin.underline:onDataChanged()
+                                plugin:showMsg('"' .. name .. '" is now tracked as a character.', 3)
+                                if refresh_browser_fn then refresh_browser_fn() end
+                            end,
+                        })
+                    end,
+                },
+            },
         }
     end
 

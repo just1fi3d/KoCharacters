@@ -459,6 +459,29 @@ function Extraction:_processNextInQueue()
     end
 end
 
+-- Split known characters into on-page profiles (to update) vs a skip list,
+-- and append codex entry names to the skip list: an entity tracked in the
+-- codex (deity, place, concept) must not also be returned as a character —
+-- two entries silently splitting each new fact between them is worse than
+-- either home alone. A name that already exists as a character stays on the
+-- character side. To track a codex entity as a character, convert it via
+-- "Track as character" in the codex entry viewer.
+function Extraction:_buildSkipLists(book_id, text_lower)
+    local skip_names, chars_in_text = {}, {}
+    local char_names = {}
+    for _, c in ipairs(self.db:load(book_id)) do
+        char_names[(c.name or ""):lower()] = true
+        if charInText(c, text_lower) then table.insert(chars_in_text, c)
+        else table.insert(skip_names, c.name) end
+    end
+    for _, e in ipairs(self.db_codex:load(book_id)) do
+        if e.name and e.name ~= "" and not char_names[e.name:lower()] then
+            table.insert(skip_names, e.name)
+        end
+    end
+    return skip_names, chars_in_text
+end
+
 function Extraction:_processCharacterJob(job, book_id)
     local pageno = job.pageno
 
@@ -476,14 +499,7 @@ function Extraction:_processCharacterJob(job, book_id)
         return
     end
 
-    -- Build existing/skip lists
-    local existing   = self.db:load(book_id)
-    local page_lower = page_text:lower()
-    local skip_names, chars_in_text = {}, {}
-    for _, c in ipairs(existing) do
-        if charInText(c, page_lower) then table.insert(chars_in_text, c)
-        else table.insert(skip_names, c.name) end
-    end
+    local skip_names, chars_in_text = self:_buildSkipLists(book_id, page_text:lower())
 
     local DataStorage    = require("datastorage")
     local tmp_dir        = DataStorage:getDataDir() .. "/kocharacters"
@@ -845,13 +861,7 @@ function Extraction:autoExtract(page_num)
     self._auto_extracting = true
     self:showScanIndicator()
 
-    local existing   = self.db:load(book_id)
-    local page_lower = page_text:lower()
-    local skip_names, chars_in_text = {}, {}
-    for _, c in ipairs(existing) do
-        if charInText(c, page_lower) then table.insert(chars_in_text, c)
-        else table.insert(skip_names, c.name) end
-    end
+    local skip_names, chars_in_text = self:_buildSkipLists(book_id, page_text:lower())
 
     local client = GeminiClient:new(api_key, self._get_model())
     local characters, api_err, usage, book_context
@@ -964,14 +974,7 @@ function Extraction:onExtractCurrentPage()
         UIManager:show(working_msg)
         UIManager:forceRePaint()
 
-        local all_chars     = self_ref.db:load(book_id)
-        local chars_in_text = {}
-        local skip_names    = {}
-        local page_lower    = page_text:lower()
-        for _, c in ipairs(all_chars) do
-            if charInText(c, page_lower) then table.insert(chars_in_text, c)
-            else table.insert(skip_names, c.name) end
-        end
+        local skip_names, chars_in_text = self_ref:_buildSkipLists(book_id, page_text:lower())
         logger.info("KoCharacters: chars_in_text=" .. #chars_in_text .. " skip=" .. #skip_names)
 
         local client = GeminiClient:new(api_key, self._get_model())
@@ -1289,14 +1292,7 @@ function Extraction:doChapterScan(book_id, start_page, end_page)
         end
 
         local combined_text  = table.concat(texts, "\n---\n")
-        local combined_lower = combined_text:lower()
-        local all_chars      = self_ref.db:load(book_id)
-        local chars_in_text  = {}
-        local skip_names     = {}
-        for _, c in ipairs(all_chars) do
-            if charInText(c, combined_lower) then table.insert(chars_in_text, c)
-            else table.insert(skip_names, c.name) end
-        end
+        local skip_names, chars_in_text = self_ref:_buildSkipLists(book_id, combined_text:lower())
 
         local characters, err, usage, book_context
         local ok, call_err = pcall(function()

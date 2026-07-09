@@ -89,9 +89,36 @@ function UICharacter.checkAndWarnDuplicates(plugin, book_id, on_continue)
 end
 
 function UICharacter.handleIncomingConflicts(plugin, book_id, new_chars, on_done, page_num, skip_cleanup)
+    local existing = plugin.db:load(book_id)
+
+    -- Backstop for the codex skip list: an entity already tracked in the codex
+    -- (deity, place, concept) must not also become a character — two entries
+    -- would silently split each new fact between them. Names that already
+    -- exist as characters pass through (normal update flow); converting a
+    -- codex entity is done explicitly via "Track as character" in its viewer.
+    local char_set = {}
+    for _, c in ipairs(existing) do char_set[(c.name or ""):lower()] = true end
+    local codex_set = {}
+    for _, e in ipairs(plugin.db_codex:load(book_id)) do
+        if e.name and e.name ~= "" then codex_set[e.name:lower()] = true end
+        for _, a in ipairs(e.aliases or {}) do
+            if a ~= "" then codex_set[a:lower()] = true end
+        end
+    end
+    local kept = {}
+    for _, c in ipairs(new_chars) do
+        local low = (c.name or ""):lower()
+        if codex_set[low] and not char_set[low] then
+            plugin:appendActivityLog(book_id, 'Skipped "' .. c.name
+                .. '" as character — already a codex entry (p.' .. tostring(page_num or "?") .. ")")
+        else
+            table.insert(kept, c)
+        end
+    end
+    new_chars = kept
+
     local distinct_pairs = plugin.db:loadDistinctPairs(book_id)
     new_chars = UtilsCharacter.deduplicateIncoming(new_chars, distinct_pairs)
-    local existing  = plugin.db:load(book_id)
     local conflicts = UtilsCharacter.findIncomingConflicts(existing, new_chars, distinct_pairs)
     if #conflicts == 0 then on_done(new_chars); return end
 
@@ -544,10 +571,43 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 end,
             })
         end
+        -- Converts the entry: exactly one home per entity. Mirrors "Track as
+        -- character" on the codex side — for names extraction wrongly treated
+        -- as people (deities, orders, places). Type defaults to "concept";
+        -- codex cleanup validates it against the taxonomy.
+        local function do_move_to_codex()
+            close_fn()
+            UIManager:show(ConfirmBox:new{
+                text        = 'Move "' .. name .. '" to the codex?\n\n'
+                              .. "The character entry will be converted: new information "
+                              .. "will go to its codex entry from now on.",
+                ok_text     = "Convert",
+                ok_callback = function()
+                    local parts = {}
+                    for _, s in ipairs({ char.background, char.physical_description, char.personality }) do
+                        if s and s ~= "" then table.insert(parts, s) end
+                    end
+                    plugin.db_codex:merge(book_id, { {
+                        name              = name,
+                        aliases           = char.aliases or {},
+                        type              = "concept",
+                        description       = table.concat(parts, " "),
+                        significance      = "",
+                        known_connections = char.relationships or {},
+                        first_seen_page   = char.first_seen_page,
+                    } }, char.first_seen_page)
+                    plugin.db:deleteCharacter(book_id, name)
+                    plugin.underline:onDataChanged()
+                    plugin:showMsg('"' .. name .. '" is now tracked in the codex.', 3)
+                    if refresh_browser_fn then refresh_browser_fn() end
+                end,
+            })
+        end
 
         return {
             {
                 { text = "Clean up",   callback = function() close_fn(); UICharacter.onCleanCharacter(plugin, book_id, char.name) end },
+                { text = "To codex",   callback = do_move_to_codex },
                 { text = "Edit",       callback = function()
                     close_fn()
                     local function show_viewer_fn()
