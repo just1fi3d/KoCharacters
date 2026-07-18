@@ -237,6 +237,18 @@ function CharacterDB:getKnownNames(book_md5)
     return names
 end
 
+-- Exact name/alias lookup (case-insensitive); mirrors CodexDB:findByName
+function CharacterDB:findByName(book_md5, name_or_alias)
+    local lower = name_or_alias:lower()
+    for _, c in ipairs(self:load(book_md5)) do
+        if c.name and c.name:lower() == lower then return c end
+        for _, alias in ipairs(c.aliases or {}) do
+            if alias:lower() == lower then return c end
+        end
+    end
+    return nil
+end
+
 -- Merge source character into target: combines fields, removes source
 function CharacterDB:mergeCharacters(book_md5, source_name, target_name)
     if source_name == target_name then return false end

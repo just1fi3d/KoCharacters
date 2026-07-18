@@ -304,6 +304,7 @@ function UICodex.showEntryViewer(plugin, book_id, entry, refresh_browser_fn)
                             ok_text     = "Delete",
                             ok_callback = function()
                                 plugin.db_codex:deleteEntry(book_id, name)
+                                plugin.underline:onDataChanged()
                                 plugin:showMsg('"' .. name .. '" deleted from codex.', 2)
                                 if refresh_browser_fn then refresh_browser_fn() end
                             end,

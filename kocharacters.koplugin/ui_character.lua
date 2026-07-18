@@ -567,6 +567,7 @@ function UICharacter.showCharacterViewer(plugin, book_id, char, sort_mode, query
                 ok_text     = "Delete",
                 ok_callback = function()
                     plugin.db:deleteCharacter(book_id, name)
+                    plugin.underline:onDataChanged()
                     plugin:showMsg(name .. " deleted.", 2)
                 end,
             })
@@ -1472,6 +1473,23 @@ local _stop_words = { the=1, a=1, an=1, of=1, ["in"]=1, at=1, to=1, ["and"]=1, [
 
 function UICharacter.findMatchesForWord(all_chars, word)
     local word_lower = word:lower()
+    -- Exact name/alias matches win outright (e.g. a tapped underline target is
+    -- always a full DB name); token matching below would drag in every
+    -- character sharing a name particle ("Tomasso d'Astibar bar Sandre").
+    local exact = {}
+    for _, c in ipairs(all_chars) do
+        if (c.name or ""):lower() == word_lower then
+            table.insert(exact, c)
+        else
+            for _, alias in ipairs(c.aliases or {}) do
+                if alias:lower() == word_lower then
+                    table.insert(exact, c)
+                    break
+                end
+            end
+        end
+    end
+    if #exact > 0 then return exact end
     local tokens = { word_lower }
     for w in word_lower:gmatch("%a+") do
         if #w >= 3 and not _stop_words[w] then

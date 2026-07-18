@@ -144,10 +144,22 @@ function Underline:onDataChanged()
     if self._unsupported or not self:isEnabled() or not self:autoAddNew() then return end
     if not self._scanned_names then return end  -- initial scan hasn't run yet
     if self._refresh_queued then return end
-    -- Cheap in-memory diff first: skip disk/scan work when no names changed.
+    -- Cheap in-memory diff first: skip disk/scan work when nothing changed.
+    -- A change is a new name, a removed name, or a name whose kind flipped
+    -- (entry moved between codex and characters); a kind flip needs no rescan
+    -- but must rebuild _targets or taps keep resolving against the old side.
+    local targets = self:_buildTargets()
     local changed = false
-    for name_low in pairs(self:_buildTargets()) do
-        if not self._scanned_names[name_low] then changed = true; break end
+    for name_low, t in pairs(targets) do
+        local prev = self._targets and self._targets[name_low]
+        if not self._scanned_names[name_low] or (prev and prev.kind ~= t.kind) then
+            changed = true; break
+        end
+    end
+    if not changed then
+        for name_low in pairs(self._scanned_names) do
+            if not targets[name_low] then changed = true; break end
+        end
     end
     if not changed then return end
     self._refresh_queued = true
@@ -432,6 +444,12 @@ function Underline:refresh(interactive)
     self._pos_hash      = nil   -- force position (re)computation
     self._box_cache_sig = nil
 
+    -- Repaint so the change shows on the current page (underlines of deleted
+    -- entries vanish, freshly scanned names appear) without a page turn.
+    if #to_scan > 0 or next(removed) then
+        UIManager:setDirty(nil, "ui")
+    end
+
     if interactive then
         self.plugin:showMsg("Underlines: " .. #matches .. " occurrence(s) of "
             .. #names_list .. " tracked name(s).", 3)
@@ -553,11 +571,22 @@ function Underline:_openEntry(match)
     UIManager:scheduleIn(0.1, function()
         local book_id = plugin:getBookID()
         if not book_id then return end
+        -- Resolve at tap time rather than trusting the cached kind: after an
+        -- entry moves between codex and characters the underline outlives the
+        -- old kind until the debounced refresh lands, so a miss on the
+        -- recorded side falls back to the other one.
         if target.kind == "char" then
-            UICharacter.onWordCharacterLookup(plugin, target.text)
+            if plugin.db:findByName(book_id, target.text) then
+                UICharacter.onWordCharacterLookup(plugin, target.text)
+            else
+                local entry = plugin.db_codex:findByName(book_id, target.text)
+                if entry then UICodex.showEntryViewer(plugin, book_id, entry)
+                else UICharacter.onWordCharacterLookup(plugin, target.text) end
+            end
         else
             local entry = plugin.db_codex:findByName(book_id, target.text)
-            if entry then UICodex.showEntryViewer(plugin, book_id, entry) end
+            if entry then UICodex.showEntryViewer(plugin, book_id, entry)
+            else UICharacter.onWordCharacterLookup(plugin, target.text) end
         end
     end)
 end
