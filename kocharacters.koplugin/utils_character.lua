@@ -98,12 +98,26 @@ local function sharesSignificantWord(a_low, b_low)
     return false
 end
 
+-- Placeholder convention for characters encountered before their name is known
+-- (see DEFAULT_UNNAMED_MATCH_PROMPT in gemini_client.lua), e.g. "Unnamed Girl",
+-- "Unnamed Soldier".
+local function isUnnamedPlaceholder(low)
+    return low:match("^unnamed%f[%A]") ~= nil
+end
+
 -- Returns true when two already-lowercased names are similar enough to be duplicates.
 -- Both names must be at least 4 characters; exact matches are not considered similar
 -- (they are intentional updates, not conflicts).
 function UtilsCharacter.namesAreSimilar(a_low, b_low)
     if #a_low < 4 or #b_low < 4 then return false end
     if a_low == b_low then return false end
+    -- Two different unnamed placeholders (e.g. "Unnamed Girl" vs "Unnamed Soldier")
+    -- are never the same person as far as this fast heuristic is concerned — they
+    -- only share the generic "Unnamed" token, which would otherwise always trip
+    -- sharesSignificantWord() below and spam a conflict prompt on every new unnamed
+    -- character. Mirrors the AI-powered unnamed-match prompt's own rule: "Never
+    -- match two unnamed characters together."
+    if isUnnamedPlaceholder(a_low) and isUnnamedPlaceholder(b_low) then return false end
     local dist      = UtilsCharacter.levenshtein(a_low, b_low)
     local threshold = math.min(#a_low, #b_low) <= 6 and 1 or 2
     return dist <= threshold or sharesSignificantWord(a_low, b_low)
