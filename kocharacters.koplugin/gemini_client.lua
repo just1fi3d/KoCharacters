@@ -15,6 +15,16 @@ local API_MODELS_BASE = "https://generativelanguage.googleapis.com/v1beta/models
 --           false    = no thinking support; thinkingConfig omitted
 GeminiClient.MODELS = {
     {
+        id           = "gemini-3.5-flash-lite",
+        name         = "3.5 Flash-Lite",
+        description  = "Latest Flash-Lite, better quality than 3.1 at similar speed. Free tier available (input/output free) — check aistudio.google.com/rate-limit for your account's exact RPM/TPM/RPD. Paid tier: $0.30/$2.50 per 1M tokens.",
+        input_price  = 0.30,
+        output_price = 2.50,
+        free_tier    = true,
+        preview      = false,
+        thinking     = "level",
+    },
+    {
         id           = "gemini-3.1-flash-lite",
         name         = "3.1 Flash-Lite",
         description  = "Best free-tier option: 11 RPM / 52K TPM / 105 RPD, input and output free. Paid tier: $0.25/$1.50 per 1M tokens, 4K RPM / 4M TPM / 150K RPD.",

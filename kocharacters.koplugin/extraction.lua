@@ -442,6 +442,7 @@ function Extraction:_processNextInQueue()
     if api_key == "" then
         self._extract_queue   = {}
         self._extract_running = false
+        self:hideScanIndicator()
         return
     end
 
