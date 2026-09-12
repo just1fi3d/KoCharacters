@@ -114,6 +114,14 @@ function Underline:_installHooks()
     local orig_paint = view.paintTo
     view.paintTo = function(view_self, bb, x, y)
         orig_paint(view_self, bb, x, y)
+        -- This only runs when the reader page is genuinely being drawn, which
+        -- can't happen while the screensaver covers it — so a refresh deferred
+        -- because the device was asleep is safe to run from here: it means the
+        -- device just woke, with no polling needed to detect that.
+        if uself._refresh_pending_wake then
+            uself._refresh_pending_wake = false
+            UIManager:scheduleIn(0, function() pcall(function() uself:refresh(false) end) end)
+        end
         local ok, err = pcall(function() uself:_drawUnderlines(bb) end)
         if not ok then logger.warn("KoCharacters: underline draw error: " .. tostring(err)) end
     end
@@ -173,21 +181,19 @@ function Underline:onDataChanged()
     if not changed then return end
     self._refresh_queued = true
     local uself = self
-    local function tryRefresh()
+    UIManager:scheduleIn(2, function()
+        uself._refresh_queued = false
         if isScreenSaverActive() then
             -- Device asleep (still running because it's plugged in): don't scan/
-            -- repaint over the screensaver. Re-arm at a slow interval and check
-            -- again once awake — underlining isn't time-critical here (it's
-            -- already deferred to "next page turn" by design), so there's no
-            -- reason to keep the event loop waking every 2s for what could be
-            -- an hours-long overnight sleep.
-            UIManager:scheduleIn(30, tryRefresh)
+            -- repaint over the screensaver. Defer to the paintTo hook below,
+            -- which only ever runs once the reader page is genuinely being
+            -- drawn again — i.e. after the screensaver is gone — so there's no
+            -- polling and no cost while asleep.
+            uself._refresh_pending_wake = true
             return
         end
-        uself._refresh_queued = false
         pcall(function() uself:refresh(false) end)
-    end
-    UIManager:scheduleIn(2, tryRefresh)
+    end)
 end
 
 -- ---------------------------------------------------------------------------
