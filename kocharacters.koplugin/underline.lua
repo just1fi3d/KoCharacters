@@ -28,6 +28,15 @@ local logger      = require("logger")
 local UICharacter = require("ui_character")
 local UICodex     = require("ui_codex")
 
+-- Returns true if the screensaver is currently up (device asleep/suspended showing
+-- the cover). A debounced incremental rescan can still fire in the background while
+-- asleep (a plugged-in device stays awake enough to keep running); repainting over
+-- the screensaver flashes the e-ink and leaves it darker than its normal render.
+local function isScreenSaverActive()
+    local Device = require("device")
+    return Device.screen_saver_mode == true
+end
+
 local UNDERLINE_COLOR    = Blitbuffer.Color8(0x55)
 local MAX_HITS           = 10000
 local MAX_BOXES_PER_PAGE = 80
@@ -164,10 +173,17 @@ function Underline:onDataChanged()
     if not changed then return end
     self._refresh_queued = true
     local uself = self
-    UIManager:scheduleIn(2, function()
+    local function tryRefresh()
+        if isScreenSaverActive() then
+            -- Device asleep (still running because it's plugged in): don't scan/
+            -- repaint over the screensaver. Re-arm and check again once awake.
+            UIManager:scheduleIn(2, tryRefresh)
+            return
+        end
         uself._refresh_queued = false
         pcall(function() uself:refresh(false) end)
-    end)
+    end
+    UIManager:scheduleIn(2, tryRefresh)
 end
 
 -- ---------------------------------------------------------------------------
