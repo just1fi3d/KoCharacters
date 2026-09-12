@@ -44,6 +44,16 @@ local function charInText(c, text_lower)
     return false
 end
 
+-- Returns true if the screensaver is currently up (device asleep/suspended showing
+-- the cover). KOReader sets this global flag while the screensaver widget is shown.
+-- Toasts must not repaint over it: a plugged-in device stays awake enough to keep
+-- polling for async results in the background, and an unconditional forceRePaint
+-- flashes the e-ink and leaves the screensaver darker than its normal render.
+local function isScreenSaverActive()
+    local Device = require("device")
+    return Device.screen_saver_mode == true
+end
+
 -- Returns true if there is a default route in the kernel routing table, indicating
 -- the network interface is up. Reads /proc/net/route directly — no external traffic,
 -- not subject to blocking, always reflects live kernel state.
@@ -126,6 +136,7 @@ end
 
 function Extraction:showScanIndicator()
     if G_reader_settings:readSetting("kocharacters_scan_indicator") == false then return end
+    if isScreenSaverActive() then return end
     if self._scan_indicator then return end
     local FrameContainer = require("ui/widget/container/framecontainer")
     local ImageWidget    = require("ui/widget/imagewidget")
@@ -159,6 +170,7 @@ end
 function Extraction:showExtractedCount(count, pageno)
     local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
     if level == "off" or level == "errors" then return end
+    if isScreenSaverActive() then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
@@ -207,6 +219,7 @@ end
 function Extraction:showExtractError(is_network)
     local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
     if level == "off" then return end
+    if isScreenSaverActive() then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
@@ -248,6 +261,7 @@ end
 function Extraction:showCodexExtractedCount(count, pageno)
     local level = G_reader_settings:readSetting("kocharacters_toast_level") or "full"
     if level == "off" or level == "errors" then return end
+    if isScreenSaverActive() then return end
     if self._count_indicator then
         UIManager:close(self._count_indicator)
         if self._count_indicator_timer then
