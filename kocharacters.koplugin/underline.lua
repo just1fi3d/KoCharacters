@@ -176,8 +176,12 @@ function Underline:onDataChanged()
     local function tryRefresh()
         if isScreenSaverActive() then
             -- Device asleep (still running because it's plugged in): don't scan/
-            -- repaint over the screensaver. Re-arm and check again once awake.
-            UIManager:scheduleIn(2, tryRefresh)
+            -- repaint over the screensaver. Re-arm at a slow interval and check
+            -- again once awake — underlining isn't time-critical here (it's
+            -- already deferred to "next page turn" by design), so there's no
+            -- reason to keep the event loop waking every 2s for what could be
+            -- an hours-long overnight sleep.
+            UIManager:scheduleIn(30, tryRefresh)
             return
         end
         uself._refresh_queued = false
