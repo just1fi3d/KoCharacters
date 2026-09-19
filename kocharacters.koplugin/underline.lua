@@ -303,9 +303,12 @@ end
 
 -- Bump when scan semantics change (v2: apostrophe normalisation + name-part
 -- tokens; v3: case-tolerant word-initial letters for full names; v4: name-part
--- tokens stop at the first lowercase-initial word); a version mismatch
--- discards the cache so old books rescan.
-local CACHE_VERSION = 4
+-- tokens stop at the first lowercase-initial word; v5: reject hits with a
+-- non-empty matched_word_prefix/suffix, i.e. matches sitting inside a larger
+-- word — crengine's \b doesn't reliably stop this on its own, e.g. "Elf"
+-- matching inside "himself"); a version mismatch discards the cache so old
+-- books rescan.
+local CACHE_VERSION = 5
 
 function Underline:_cachePath(book_id)
     return self.plugin.db:bookDir(book_id) .. "/underline_cache.json"
@@ -388,7 +391,13 @@ function Underline:_scanNames(doc, names, targets)
     for _, m in ipairs(hits) do
         local xp_start = m.start
         local xp_end   = m["end"]
-        if xp_start and xp_end and not xp_start:find("/h[1-6][%[/]") then
+        -- crengine's \b assertion doesn't reliably stop regex matches at word
+        -- boundaries (e.g. "Elf" matching inside "himself"); matched_word_prefix/
+        -- suffix are non-empty whenever the hit sits inside a larger word, so use
+        -- them as a second boundary check independent of the regex engine's own.
+        local whole_word = (m.matched_word_prefix == nil or m.matched_word_prefix == "")
+            and (m.matched_word_suffix == nil or m.matched_word_suffix == "")
+        if xp_start and xp_end and whole_word and not xp_start:find("/h[1-6][%[/]") then
             -- matched_text includes context words — recover the exact hit text.
             local okt, text = pcall(doc.getTextFromXPointers, doc, xp_start, xp_end)
             if okt and type(text) == "string" then
