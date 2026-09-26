@@ -306,9 +306,10 @@ end
 -- tokens stop at the first lowercase-initial word; v5: reject hits with a
 -- non-empty matched_word_prefix/suffix, i.e. matches sitting inside a larger
 -- word — crengine's \b doesn't reliably stop this on its own, e.g. "Elf"
--- matching inside "himself"); a version mismatch discards the cache so old
--- books rescan.
-local CACHE_VERSION = 5
+-- matching inside "himself"; v6: no \b on non-ASCII/punctuation name edges,
+-- which crengine's ASCII-only \b made unmatchable, e.g. "Brontë"); a version
+-- mismatch discards the cache so old books rescan.
+local CACHE_VERSION = 6
 
 function Underline:_cachePath(book_id)
     return self.plugin.db:bookDir(book_id) .. "/underline_cache.json"
@@ -379,7 +380,17 @@ function Underline:_scanNames(doc, names, targets)
     -- Longest first: alternation is leftmost-first, so "Devin" before
     -- "Devin d'Asoli" would stop the match (and the underline) at "Devin".
     table.sort(alts, function(a, b) return #a > #b end)
-    local pattern = "\\b(" .. table.concat(alts, "|") .. ")\\b"
+    -- crengine's regex (SRELL, no Unicode data) has ASCII-only \b: an edge
+    -- next to a non-ASCII letter or punctuation ("Brontë", "Éanna") never
+    -- sees a boundary, so the name could never match. Only anchor edges that
+    -- are ASCII word chars; the matched_word_prefix/suffix check below still
+    -- rejects hits sitting inside a larger word.
+    for i, alt in ipairs(alts) do
+        local lead  = alt:match("^%[?[%w_]") and "\\b" or ""
+        local trail = alt:match("[%w_]$") and "\\b" or ""
+        alts[i] = lead .. alt .. trail
+    end
+    local pattern = "(" .. table.concat(alts, "|") .. ")"
 
     local ok, hits = pcall(doc.findAllText, doc, pattern, false, 1, MAX_HITS, true)
     if not ok or type(hits) ~= "table" then
