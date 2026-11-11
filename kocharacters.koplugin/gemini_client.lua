@@ -455,6 +455,36 @@ function GeminiClient.isRetryableError(err)
         or err:find("overload")     ~= nil
 end
 
+-- Returns true if the kernel routing table has a default route (network interface up).
+-- Local read, no traffic. Assumes online when /proc/net/route is unreadable.
+function GeminiClient.isOnline()
+    local f = io.open("/proc/net/route", "r")
+    if not f then return true end
+    for line in f:lines() do
+        if line:match("^%S+%s+(%S+)") == "00000000" then f:close(); return true end
+    end
+    f:close()
+    return false
+end
+
+-- Blocking HTTPS request with bounded socket timeouts, so a stalled connection fails
+-- instead of freezing the UI thread. Fails fast when offline (DNS lookups can't be
+-- timed out and would otherwise hang). Returns ok, status, body_string.
+local BLOCK_TIMEOUT, TOTAL_TIMEOUT = 30, 90
+local function httpsRequest(req)
+    if not GeminiClient.isOnline() then return nil, "offline", "" end
+    local body = {}
+    req.sink = ltn12.sink.table(body)
+    local has_su, socketutil = pcall(require, "socketutil")
+    if has_su then
+        socketutil:set_timeout(BLOCK_TIMEOUT, TOTAL_TIMEOUT)
+        req.sink = socketutil.table_sink(body)
+    end
+    local ok, status = https.request(req)
+    if has_su then socketutil:reset_timeout() end
+    return ok, status, table.concat(body)
+end
+
 -- POST prompt to Gemini; returns stripped candidate text, err, usage
 function GeminiClient:_post(prompt, temperature, max_tokens)
     local request_body = json.encode({
@@ -462,8 +492,7 @@ function GeminiClient:_post(prompt, temperature, max_tokens)
         generationConfig = self:_genConfig(temperature, max_tokens),
     })
     local api_url = API_MODELS_BASE .. self.model .. ":generateContent"
-    local response_body = {}
-    local ok, status = https.request({
+    local ok, status, raw = httpsRequest({
         url    = api_url .. "?key=" .. self.api_key,
         method = "POST",
         headers = {
@@ -471,10 +500,8 @@ function GeminiClient:_post(prompt, temperature, max_tokens)
             ["Content-Length"] = tostring(#request_body),
         },
         source = ltn12.source.string(request_body),
-        sink   = ltn12.sink.table(response_body),
     })
     if not ok then return nil, "Network error: " .. tostring(status) end
-    local raw    = table.concat(response_body)
     local parsed = json.decode(raw)
     if not parsed then return nil, "Failed to parse Gemini response" end
     if status ~= 200 then
@@ -1127,17 +1154,14 @@ end
 -- Fetch model metadata from the Gemini models endpoint
 function GeminiClient:fetchModelInfo()
     local url = API_MODELS_BASE .. self.model .. "?key=" .. self.api_key
-    local response_body = {}
-    local ok, status = https.request({
+    local ok, status, raw = httpsRequest({
         url     = url,
         method  = "GET",
         headers = { ["Content-Type"] = "application/json" },
-        sink    = ltn12.sink.table(response_body),
     })
     if not ok then
         return nil, "Network error: " .. tostring(status)
     end
-    local raw    = table.concat(response_body)
     local parsed = json.decode(raw)
     if not parsed then
         return nil, "Failed to parse response"

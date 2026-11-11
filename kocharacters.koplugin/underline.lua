@@ -19,7 +19,6 @@
 -- refreshes only on book open or via "Rescan book now" in settings.
 
 local UIManager   = require("ui/uimanager")
-local InfoMessage = require("ui/widget/infomessage")
 local Screen      = require("device").screen
 local Blitbuffer  = require("ffi/blitbuffer")
 local json        = require("dkjson")
@@ -365,6 +364,59 @@ local function readCache(path)
     return json.decode(content)
 end
 
+-- Chapter openers often put the first letter in its own inline node
+-- ("<span class="DROP-CAPS">A</span>lex nailed…"), and the full-name pattern in
+-- _scanNames never matches across that boundary. Search the names minus their first
+-- letter instead, step back one visible char to the drop cap, and accept a hit only
+-- if the combined text is exactly a tracked name. Returns matches, ok; ok=false means
+-- the call ran past DROPCAP_MAX_SEC and the caller should give up on this pass.
+local DROPCAP_MAX_SEC = 15
+
+function Underline:_scanDropCapNames(doc, names, targets)
+    local out = {}
+    if type(doc.getPrevVisibleChar) ~= "function" then return out, true end
+    local alts, tails = {}, {}
+    for _, name_low in ipairs(names) do
+        local text = normApostrophe(targets[name_low].text)
+        if text:match("^%a") and #text >= 4 then
+            local tail = text:sub(2)
+            tails[tail:lower()] = true
+            local esc = reEscape(tail):gsub("'", "['\226\128\153]")
+            alts[#alts + 1] = esc .. (tail:match("[%w_]$") and "\\b" or "")
+        end
+    end
+    if #alts == 0 then return out, true end
+    table.sort(alts, function(a, b) return #a > #b end)
+    local t0 = os.time()
+    local ok, hits = pcall(doc.findAllText, doc, "(" .. table.concat(alts, "|") .. ")", false, 1, MAX_HITS, true)
+    if not ok or type(hits) ~= "table" then
+        if not ok then logger.warn("KoCharacters: drop-cap findAllText failed: " .. tostring(hits)) end
+        return out, true
+    end
+    for _, m in ipairs(hits) do
+        if os.time() - t0 > DROPCAP_MAX_SEC then return out, false end
+        local xp_start, xp_end = m.start, m["end"]
+        local prefix = m.matched_word_prefix or ""
+        -- A drop-cap tail starts at offset 0 of the text node following the drop cap's
+        -- node; ordinary mid-sentence mentions don't, so skip them before the costlier
+        -- per-hit document calls.
+        if xp_start and xp_end and #prefix <= 1 and xp_start:find("%.0$")
+            and not xp_start:find("/h[1-6][%[/]") then
+            local okp, xp_prev = pcall(doc.getPrevVisibleChar, doc, xp_start)
+            if okp and type(xp_prev) == "string" and xp_prev ~= xp_start then
+                local okt, text = pcall(doc.getTextFromXPointers, doc, xp_prev, xp_end)
+                if okt and type(text) == "string" and text:match("^%a") then
+                    local low = normApostrophe(text):lower()
+                    if targets[low] and tails[low:sub(2)] then
+                        out[#out + 1] = { s = xp_prev, e = xp_end, n = low }
+                    end
+                end
+            end
+        end
+    end
+    return out, os.time() - t0 <= DROPCAP_MAX_SEC
+end
+
 -- Run findAllText for the given list of names; returns raw matches {s, e, n}.
 -- Heading hits (chapter/book titles) are dropped.
 function Underline:_scanNames(doc, names, targets)
@@ -422,11 +474,94 @@ function Underline:_scanNames(doc, names, targets)
     return out
 end
 
--- Load the disk cache, scan any names not yet covered, drop names no longer
--- tracked, persist, then compute screen positions and activate the match set.
--- interactive=true shows progress/summary UI (settings-menu triggered).
+-- Runs step(batch) over `names` in adaptively sized batches, yielding to the UI
+-- between batches so the reader can keep turning pages. findAllText is one blocking
+-- C call over the whole book, so the work is cut into short calls (halved when a call
+-- freezes the UI for BATCH_SLOW_SEC+, doubled when under BATCH_FAST_SEC) instead of
+-- one long freeze. `gap` is the idle time between batches: long for background scans
+-- so page turns get through, short for a user-requested rescan.
+-- step returns false to stop; on_done(completed_count, stopped_early) runs last.
+local BATCH_SLOW_SEC, BATCH_FAST_SEC = 2.5, 1.0
+
+local function monotonicSec()
+    local ok, time = pcall(require, "ui/time")
+    if ok and time and time.monotonic and time.to_s then
+        return function() return time.to_s(time.monotonic()) end
+    end
+    return os.time
+end
+local nowSec = monotonicSec()
+
+local function runBatches(self, names, size, max_size, gap, step, on_progress, on_done)
+    local i, doc = 1, self.plugin.ui.document
+    local function nextBatch()
+        if self._scan_cancel or self.plugin.ui.document ~= doc or i > #names then
+            return on_done(i - 1, self._scan_cancel or i <= #names)
+        end
+        local batch = {}
+        for k = i, math.min(i + size - 1, #names) do batch[#batch + 1] = names[k] end
+        local t0 = nowSec()
+        local keep_going = step(batch)
+        local dt = nowSec() - t0
+        i = i + #batch
+        if dt >= BATCH_SLOW_SEC then size = math.max(1, math.floor(size / 2))
+        elseif dt < BATCH_FAST_SEC then size = math.min(max_size, size * 2) end
+        on_progress(i - 1, #names)
+        if keep_going == false then return on_done(i - 1, true) end
+        UIManager:scheduleIn(gap, nextBatch)
+    end
+    UIManager:scheduleIn(gap, nextBatch)
+end
+
+-- Small top-right progress toast. Replaced in place on each update; repaints only
+-- its own region with a "fast" refresh so the page underneath isn't flashed.
+function Underline:_showProgressToast(text)
+    if isScreenSaverActive() then return end
+    local FrameContainer = require("ui/widget/container/framecontainer")
+    local TextWidget     = require("ui/widget/textwidget")
+    local Font           = require("ui/font")
+    self:_hideProgressToast()
+    local toast = FrameContainer:new{
+        toast      = true,
+        background = Blitbuffer.COLOR_WHITE,
+        bordersize = 1,
+        padding    = 4,
+        TextWidget:new{ text = text, face = Font:getFace("cfont", 16) },
+    }
+    local size = toast:getSize()
+    local x = Screen:getWidth() - size.w
+    toast.dimen = require("ui/geometry"):new{ x = x, y = 0, w = size.w, h = size.h }
+    self._progress_toast = toast
+    UIManager:show(toast, "fast", toast.dimen, x, 0)
+end
+
+function Underline:_hideProgressToast()
+    local toast = self._progress_toast
+    if not toast then return end
+    self._progress_toast = nil
+    UIManager:close(toast, "fast", toast.dimen)
+end
+
+function Underline:isScanning()
+    return self._scanning == true
+end
+
+-- Stops a running scan after the current batch; names scanned so far stay cached.
+function Underline:cancelScan()
+    if self._scanning then
+        self._scan_cancel  = true
+        self._rescan_after = false
+    end
+end
+
+-- Load the disk cache, scan any names not yet covered (full-name pass, then the
+-- drop-cap pass), drop names no longer tracked, persist, then compute screen
+-- positions and activate the match set. The scans run in yielding batches with a
+-- non-modal corner toast; cancelScan() stops early, keeping whatever was covered.
+-- interactive=true shows a summary when finished (settings-menu triggered).
 function Underline:refresh(interactive)
     if self._unsupported then return end
+    if self._scanning then self._rescan_after = true; return end
     local doc     = self.plugin.ui.document
     local book_id = self.plugin:getBookID()
     if not doc or not book_id then return end
@@ -444,62 +579,129 @@ function Underline:refresh(interactive)
         cache = { mtime = mtime, names = {}, matches = {} }  -- stale or absent → full rescan
     end
 
-    local cached_names = {}
-    for _, n in ipairs(cache.names) do cached_names[n] = true end
+    -- covered: name_low sets for each pass. The drop-cap pass was added to v6
+    -- caches later, so a missing list simply means "not run yet" for those names.
+    local covered, dc_covered = {}, {}
+    for _, n in ipairs(cache.names) do covered[n] = true end
+    for _, n in ipairs(type(cache.dropcap) == "table" and cache.dropcap or {}) do dc_covered[n] = true end
 
-    -- Names to scan (new) and detect removals (renamed/deleted entries).
-    local to_scan, removed = {}, {}
+    local to_scan, dc_to_scan, removed = {}, {}, {}
     for name_low in pairs(targets) do
-        if not cached_names[name_low] then to_scan[#to_scan + 1] = name_low end
+        if not covered[name_low] then to_scan[#to_scan + 1] = name_low end
+        if not dc_covered[name_low] then dc_to_scan[#dc_to_scan + 1] = name_low end
     end
-    for name_low in pairs(cached_names) do
+    for name_low in pairs(covered) do
         if not targets[name_low] then removed[name_low] = true end
     end
 
-    local matches = {}
+    local matches, have = {}, {}
+    local function addMatch(m)
+        local key = m.n .. "|" .. m.s .. "|" .. m.e
+        if have[key] then return end
+        have[key] = true
+        matches[#matches + 1] = m
+    end
     for _, m in ipairs(cache.matches) do
-        if m.n and targets[m.n] and not removed[m.n] then matches[#matches + 1] = m end
+        if m.n and targets[m.n] and not removed[m.n] then addMatch(m) end
     end
 
-    if #to_scan > 0 then
-        local msg
-        if interactive or #to_scan > 3 then
-            msg = InfoMessage:new{ text = "Scanning book for " .. #to_scan .. " tracked name(s)…" }
-            UIManager:show(msg)
-            UIManager:forceRePaint()
+    local uself = self
+    local function finish(full_done, dc_done)
+        -- Only names actually scanned count as covered, so a cancelled scan
+        -- resumes where it left off on the next refresh.
+        local names_list, dc_list = {}, {}
+        for name_low in pairs(targets) do
+            if covered[name_low] then names_list[#names_list + 1] = name_low end
+            if dc_covered[name_low] then dc_list[#dc_list + 1] = name_low end
         end
-        local new_matches = self:_scanNames(doc, to_scan, targets)
-        for _, m in ipairs(new_matches) do matches[#matches + 1] = m end
-        if msg then UIManager:close(msg) end
+        local f = io.open(path, "w")
+        if f then
+            f:write(json.encode({ version = CACHE_VERSION, mtime = mtime, names = names_list,
+                                  dropcap = dc_list, matches = matches }))
+            f:close()
+        end
+
+        uself._targets       = targets
+        uself._matches       = dropContained(matches)
+        uself._scanned_names = {}
+        for _, name_low in ipairs(names_list) do uself._scanned_names[name_low] = true end
+        uself._pos_hash      = nil   -- force position (re)computation
+        uself._box_cache_sig = nil
+
+        -- Repaint so the change shows on the current page (underlines of deleted
+        -- entries vanish, freshly scanned names appear) without a page turn.
+        if full_done > 0 or dc_done > 0 or next(removed) then
+            UIManager:setDirty(nil, "ui")
+        end
+        if interactive then
+            uself.plugin:showMsg("Underlines: " .. #matches .. " occurrence(s) of "
+                .. #names_list .. " tracked name(s).", 3)
+        end
     end
 
-    -- Persist (list form: name set + matches)
-    local names_list = {}
-    for name_low in pairs(targets) do names_list[#names_list + 1] = name_low end
-    local f = io.open(path, "w")
-    if f then
-        f:write(json.encode({ version = CACHE_VERSION, mtime = mtime,
-                              names = names_list, matches = matches }))
-        f:close()
+    if #to_scan == 0 and #dc_to_scan == 0 then
+        finish(0, 0)
+        return
     end
 
-    self._targets       = targets
-    self._matches       = dropContained(matches)
-    self._scanned_names = {}
-    for name_low in pairs(targets) do self._scanned_names[name_low] = true end
-    self._pos_hash      = nil   -- force position (re)computation
-    self._box_cache_sig = nil
-
-    -- Repaint so the change shows on the current page (underlines of deleted
-    -- entries vanish, freshly scanned names appear) without a page turn.
-    if #to_scan > 0 or next(removed) then
-        UIManager:setDirty(nil, "ui")
+    self._scanning, self._scan_cancel = true, false
+    -- Progress is a small corner toast: toasts never consume input, so the reader
+    -- keeps turning pages and tapping normally while the scan runs. Cancel lives in
+    -- the underline settings menu ("Cancel underline scan").
+    local last_msg_ts = 0
+    local function showProgress(label, done, total, force)
+        if not (interactive or #to_scan > 3 or #dc_to_scan > 3) then return end
+        if not force and nowSec() - last_msg_ts < 3 then return end
+        last_msg_ts = nowSec()
+        uself:_showProgressToast("Underlining " .. label .. " " .. done .. "/" .. total)
+    end
+    local function endScan(full_done, dc_done)
+        uself:_hideProgressToast()
+        uself._scanning = false
+        local again = uself._rescan_after
+        uself._rescan_after = false
+        finish(full_done, dc_done)
+        if again and not uself._scan_cancel then
+            UIManager:scheduleIn(0.5, function() pcall(function() uself:refresh(false) end) end)
+        end
     end
 
-    if interactive then
-        self.plugin:showMsg("Underlines: " .. #matches .. " occurrence(s) of "
-            .. #names_list .. " tracked name(s).", 3)
+    local gap = interactive and 0.2 or 1.0
+    local full_done = 0
+    local function runDropCapPass()
+        local dc_done = 0
+        local aborted = false
+        runBatches(self, dc_to_scan, 2, 12, gap,
+            function(batch)
+                local found, in_time = uself:_scanDropCapNames(doc, batch, targets)
+                for _, m in ipairs(found) do addMatch(m) end
+                if not in_time then
+                    aborted = true
+                    logger.warn("KoCharacters: drop-cap scan too slow; skipping it for this book")
+                    -- Mark everything covered so a slow device isn't re-stalled on every open.
+                    for _, n in ipairs(dc_to_scan) do dc_covered[n] = true end
+                    return false
+                end
+                for _, n in ipairs(batch) do dc_covered[n] = true end
+            end,
+            function(done, total) showProgress("drop caps", done, total) end,
+            function(done) endScan(full_done, aborted and 0 or done) end)
     end
+
+    runBatches(self, to_scan, 2, 16, gap,
+        function(batch)
+            for _, m in ipairs(uself:_scanNames(doc, batch, targets)) do addMatch(m) end
+            for _, n in ipairs(batch) do covered[n] = true end
+        end,
+        function(done, total) showProgress("names", done, total) end,
+        function(done, stopped)
+            full_done = done
+            if stopped or uself._scan_cancel or #dc_to_scan == 0 then
+                return endScan(full_done, 0)
+            end
+            runDropCapPass()
+        end)
+    if #to_scan > 0 then showProgress("names", 0, #to_scan, true) end
 end
 
 -- Compute (or recompute after reflow) document positions for every match and

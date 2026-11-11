@@ -706,15 +706,25 @@ function UISettings.openUnderlineSettings(plugin)
                     G_reader_settings:flipNilOrTrue("kocharacters_underline_auto_add")
                     reopen(underline_menu)
                 end,
-                help = "When ON (default), each extraction that finds new characters triggers a background rescan so their names are underlined from the next page turn — this may cause a brief pause shortly after extraction completes. When OFF, new names are underlined only after the book is reopened or a manual rescan.",
+                help = "When ON (default), each extraction that finds new characters triggers a background rescan so their names are underlined from a later page turn. You can keep reading during the scan; page turns may lag by a second or two while a scan step runs. When OFF, new names are underlined only after the book is reopened or a manual rescan.",
             },
             {
-                text     = "Rescan book now",
+                text_func = function()
+                    if plugin.underline and plugin.underline:isScanning() then
+                        return "Cancel underline scan"
+                    end
+                    return "Rescan book now"
+                end,
                 callback = function()
                     UIManager:close(underline_menu)
-                    if plugin.underline then plugin.underline:refresh(true) end
+                    if not plugin.underline then return end
+                    if plugin.underline:isScanning() then
+                        plugin.underline:cancelScan()
+                    else
+                        plugin.underline:refresh(true)
+                    end
                 end,
-                help = "Re-checks the tracked name list against the book and scans for any names added since the last scan.",
+                help = "Re-checks the tracked name list against the book and scans for any names added since the last scan. Scans run in the background (progress shows in the top-right corner) so you can keep reading; while one is running this item cancels it. Names already scanned stay cached.",
             },
         },
         width       = Screen:getWidth(),

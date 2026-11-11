@@ -54,20 +54,6 @@ local function isScreenSaverActive()
     return Device.screen_saver_mode == true
 end
 
--- Returns true if there is a default route in the kernel routing table, indicating
--- the network interface is up. Reads /proc/net/route directly — no external traffic,
--- not subject to blocking, always reflects live kernel state.
-local function isOnline()
-    local f = io.open("/proc/net/route", "r")
-    if not f then return true end  -- can't read; assume online so we don't silently drop jobs
-    for line in f:lines() do
-        local dest = line:match("^%S+%s+(%S+)")
-        if dest == "00000000" then f:close(); return true end
-    end
-    f:close()
-    return false
-end
-
 -- deps:
 --   db            (value)    — DBCharacter instance
 --   ui            (value)    — plugin's self.ui (live reference; .document/.view populated later)
@@ -535,7 +521,7 @@ function Extraction:_processCharacterJob(job, book_id)
         return
     end
 
-    if not isOnline() then
+    if not GeminiClient.isOnline() then
         os.remove(self._curl_req_file)
         self.db:markPagePending(book_id, pageno)
         logger.info("KoCharacters: offline — page " .. tostring(pageno) .. " queued as pending")
@@ -709,7 +695,7 @@ function Extraction:_runCodexEnrichment(book_id, pageno, page_text, on_done, ret
         return
     end
 
-    if not isOnline() then
+    if not GeminiClient.isOnline() then
         os.remove(req_file)
         self:hideScanIndicator()
         self._codex_pending[pageno] = true
